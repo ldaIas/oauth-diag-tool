@@ -1,21 +1,13 @@
 
 import Browser
-import Html.Styled exposing (..)
-import Html.Styled.Attributes exposing (placeholder, type_, value)
-import Html.Styled.Events exposing (onClick, onInput)
 import Http
-import Styles exposing (..)
 
 main : Program () Model Msg
 main =
     Browser.element
         { init = \_ -> ( init, Cmd.none )
         , update = update
-
-        {- | Use toUnstyled because our view returns Html.Styled.Html and view need plain Html.
-           | elm-css generates the css in the actual dom
-        -}
-        , view = view >> toUnstyled
+        , view = view
         , subscriptions = \_ -> Sub.none
         }
 
