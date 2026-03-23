@@ -26,11 +26,13 @@ There are no tests or linting configured yet.
 **Two-part structure:**
 
 - `src-tauri/` — Rust backend using Tauri 2. Entry point is `main.rs` which calls `lib.rs` for Tauri Builder setup. Currently initializes logging plugin only.
-- `ui/` — Elm frontend. Single-file app at `ui/src/Main.elm` following The Elm Architecture (Model/Update/View). Compiled JS output goes to `ui/dist/main.js`, served alongside `ui/dist/index.html` and `ui/dist/styles.css`.
+- `ui/` — Elm frontend following The Elm Architecture (Model/Update/View). Compiled JS output goes to `ui/dist/main.js`, served alongside `ui/dist/index.html` and `ui/dist/styles.css`.
+  - `ui/src/Main.elm` — top-level app: page routing (server list vs create form), server model, port assignment.
+  - `ui/src/ServerForm.elm` — self-contained form module for creating auth servers. Exposes `Model`, `Msg`, `init`, `update`, `view`. Parent communicates via `Action` type returned from `update`.
 
 **Frontend serves from** `ui/dist/` (configured as `frontendDist` in `tauri.conf.json`).
 
-**Current state:** Early stage — UI renders a server list with hardcoded mock data. No Tauri IPC commands, no persistent storage, no actual OAuth protocol handling yet.
+**Current state:** UI has a server list page and a create-server form. The form collects a server name and port, then auto-derives the issuer URL (`http://localhost:<port>`), authorization URL (`/authorize`), and token endpoint (`/token`) as read-only fields. Ports auto-assign starting at 9500. No Tauri IPC commands, no persistent storage, no actual OAuth protocol handling yet.
 
 ## Key Conventions
 
