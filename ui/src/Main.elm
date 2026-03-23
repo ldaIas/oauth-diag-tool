@@ -4,6 +4,7 @@ import Browser
 import Html exposing (..)
 import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
+import ServerForm
 
 
 -- MODEL
@@ -12,32 +13,84 @@ import Html.Events exposing (onClick)
 type alias OAuthServer =
     { id : String
     , name : String
+    , issuerUrl : String
+    , authorizationUrl : String
+    , tokenEndpoint : String
     , port_ : Int
     , running : Bool
     }
 
 
+type Page
+    = ServerList
+    | CreateForm ServerForm.Model
+
+
 type alias Model =
-    { servers : List OAuthServer }
+    { servers : List OAuthServer
+    , page : Page
+    }
 
 
 init : Model
 init =
-    { servers = [] }
+    { servers = []
+    , page = ServerList
+    }
 
 
 -- UPDATE
 
 
 type Msg
-    = CreateServer
+    = OpenCreateForm
+    | FormMsg ServerForm.Msg
 
 
 update : Msg -> Model -> Model
 update msg model =
     case msg of
-        CreateServer ->
-            model
+        OpenCreateForm ->
+            { model | page = CreateForm (ServerForm.init (nextPort model)) }
+
+        FormMsg subMsg ->
+            case model.page of
+                CreateForm formModel ->
+                    let
+                        ( newForm, action ) =
+                            ServerForm.update subMsg formModel
+                    in
+                    case action of
+                        Just _ ->
+                            -- Both Submit and Cancel return to server list for now
+                            { model | page = ServerList }
+
+                        Nothing ->
+                            { model | page = CreateForm newForm }
+
+                _ ->
+                    model
+
+
+nextPort : Model -> Int
+nextPort model =
+    let
+        basePort =
+            9500
+
+        usedPorts =
+            List.map .port_ model.servers
+    in
+    findAvailable basePort usedPorts
+
+
+findAvailable : Int -> List Int -> Int
+findAvailable candidate used =
+    if List.member candidate used then
+        findAvailable (candidate + 1) used
+
+    else
+        candidate
 
 
 -- VIEW
@@ -47,9 +100,21 @@ view : Model -> Html Msg
 view model =
     div [ class "shell" ]
         [ viewHeader
-        , viewBody model
-        , viewFooter
+        , viewPage model
         ]
+
+
+viewPage : Model -> Html Msg
+viewPage model =
+    case model.page of
+        ServerList ->
+            div [ class "page-content" ]
+                [ viewBody model
+                , viewFooter
+                ]
+
+        CreateForm formModel ->
+            Html.map FormMsg (ServerForm.view formModel)
 
 
 viewHeader : Html Msg
@@ -106,7 +171,7 @@ statusLabel running =
 viewFooter : Html Msg
 viewFooter =
     div [ class "footer" ]
-        [ button [ class "btn-create", onClick CreateServer ]
+        [ button [ class "btn-create", onClick OpenCreateForm ]
             [ text "+ Create new OAuth Server" ]
         ]
 
