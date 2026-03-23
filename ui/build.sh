@@ -1,0 +1,1 @@
+elm make ui/src/Main.elm --output ui/dist/main.js
