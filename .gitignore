@@ -22,4 +22,4 @@ target
 
 # Elm files
 elm-stuff/
-**/main.js
+ui/dist/main.js
