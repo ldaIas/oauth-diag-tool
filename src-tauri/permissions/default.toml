@@ -1,0 +1,13 @@
+[default]
+description = "Default app permissions - allows all custom commands"
+permissions = ["allow-create-server-config", "allow-get-server-configs"]
+
+[[permission]]
+identifier = "allow-create-server-config"
+description = "Allow creating server configurations"
+commands.allow = ["create_server_config"]
+
+[[permission]]
+identifier = "allow-get-server-configs"
+description = "Allow reading server configurations"
+commands.allow = ["get_server_configs"]

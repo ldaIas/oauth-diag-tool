@@ -9,6 +9,44 @@
   <body>
     <div id="app"></div>
     <script src="main.js"></script>
-    <script>Elm.Main.init({ node: document.getElementById("app") });</script>
+    <script>
+      var app = Elm.Main.init({ node: document.getElementById("app") });
+
+      function waitForTauri(callback) {
+        if (window.__TAURI__) {
+          callback();
+          return;
+        }
+        const interval = setInterval(function() {
+          if (window.__TAURI__) {
+            clearInterval(interval);
+            callback();
+          }
+        }, 50);
+      }
+
+      function loadServerConfigs() {
+        window.__TAURI__.core.invoke("get_server_configs").then(function(configs) {
+          app.ports.receiveServerConfigs.send(configs);
+        }).catch(function(err) { console.error("get_server_configs failed:", err); });
+      }
+
+      app.ports.requestServerConfigs.subscribe(function() {
+        waitForTauri(loadServerConfigs);
+      });
+
+      app.ports.createServerConfig.subscribe(function(config) {
+        console.log("createServerConfig called")
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("create_server_config", {
+            configName: config.configName,
+            authServerUrl: config.authServerUrl,
+            tokenUrl: config.tokenUrl
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("create_server_config failed:", err); });
+        });
+      });
+    </script>
   </body>
 </html>

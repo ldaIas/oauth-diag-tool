@@ -9,6 +9,7 @@
     "beforeBuildCommand": "cd ui && elm make src/Main.elm --output dist/main.js"
   },
   "app": {
+    "withGlobalTauri": true,
     "windows": [
       {
         "title": "OAuth Tool",

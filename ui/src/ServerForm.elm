@@ -1,4 +1,4 @@
-module ServerForm exposing (Model, Msg, init, update, view)
+module ServerForm exposing (Action(..), Model, Msg, init, update, view)
 
 import Html exposing (..)
 import Html.Attributes exposing (class, placeholder, type_, value)
@@ -12,6 +12,9 @@ type alias Model =
     { name : String
     , portInput : String
     , port_ : Int
+    , issuerUrl : String
+    , authorizationUrl : String
+    , tokenEndpoint : String
     }
 
 
@@ -20,22 +23,24 @@ init port_ =
     { name = ""
     , portInput = String.fromInt port_
     , port_ = port_
+    , issuerUrl = ""
+    , authorizationUrl = ""
+    , tokenEndpoint = ""
     }
+        |> recomputeUrls
 
 
-issuerUrl : Model -> String
-issuerUrl model =
-    "http://localhost:" ++ String.fromInt model.port_
-
-
-authorizationUrl : Model -> String
-authorizationUrl model =
-    issuerUrl model ++ "/authorize"
-
-
-tokenEndpoint : Model -> String
-tokenEndpoint model =
-    issuerUrl model ++ "/token"
+recomputeUrls : Model -> Model
+recomputeUrls model =
+    let
+        issuer =
+            "http://localhost:" ++ String.fromInt model.port_
+    in
+    { model
+        | issuerUrl = issuer
+        , authorizationUrl = issuer ++ "/authorize"
+        , tokenEndpoint = issuer ++ "/token"
+    }
 
 
 -- UPDATE
@@ -69,7 +74,7 @@ update msg model =
                         |> Maybe.withDefault model.port_
                         |> clamp 1 65535
             in
-            ( { model | portInput = cleaned, port_ = port_ }, Nothing )
+            ( { model | portInput = cleaned, port_ = port_ } |> recomputeUrls, Nothing )
 
         Submit ->
             ( model, Just SubmitForm )
@@ -93,9 +98,9 @@ view model =
             [ div [ class "form-title" ] [ text "New Auth Server" ]
             , viewInput "Server Name" model.name SetName "My Auth Server"
             , viewInput "Port" model.portInput SetPort "9500"
-            , viewReadonly "Issuer URL" (issuerUrl model)
-            , viewReadonly "Authorization URL" (authorizationUrl model)
-            , viewReadonly "Token Endpoint" (tokenEndpoint model)
+            , viewReadonly "Issuer URL" model.issuerUrl
+            , viewReadonly "Authorization URL" model.authorizationUrl
+            , viewReadonly "Token Endpoint" model.tokenEndpoint
             , div [ class "form-actions" ]
                 [ button [ class "btn-cancel", onClick Cancel ] [ text "Cancel" ]
                 , button [ class "btn-submit", onClick Submit ] [ text "Create Server" ]

@@ -75,16 +75,22 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .server-card {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  flex-direction: column;
   padding: 14px 18px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 4px;
   transition: border-color 0.15s;
+  gap: 12px;
 }
 
 .server-card:hover { border-color: var(--border-hi); }
+
+.server-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
 
 .server-card-left { display: flex; flex-direction: column; gap: 4px; }
 
@@ -93,6 +99,36 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .server-meta { font-size: 11px; color: var(--text-dim); letter-spacing: 0.04em; }
 
 .server-card-right { display: flex; align-items: center; gap: 12px; }
+
+.server-card-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border);
+}
+
+.server-detail {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.detail-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.detail-value {
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
 
 .status-dot {
   width: 7px;

@@ -1,96 +1,115 @@
-module Main exposing (main)
+port module Main exposing (main)
 
 import Browser
 import Html exposing (..)
 import Html.Attributes exposing (class)
-import Html.Events exposing (onClick)
+import Json.Decode as Decode
+import Json.Encode as Encode
 import ServerForm
+import ServerList
+
+
+
+-- PORTS
+
+
+port createServerConfig : Encode.Value -> Cmd msg
+
+
+port requestServerConfigs : () -> Cmd msg
+
+
+port receiveServerConfigs : (Decode.Value -> msg) -> Sub msg
+
 
 
 -- MODEL
 
 
-type alias OAuthServer =
-    { id : String
-    , name : String
-    , issuerUrl : String
-    , authorizationUrl : String
-    , tokenEndpoint : String
-    , port_ : Int
-    , running : Bool
-    }
-
-
 type Page
-    = ServerList
-    | CreateForm ServerForm.Model
+    = ServerListPage
+    | CreateFormPage ServerForm.Model
 
 
 type alias Model =
-    { servers : List OAuthServer
+    { serverList : ServerList.Model
     , page : Page
     }
 
 
-init : Model
-init =
-    { servers = []
-    , page = ServerList
-    }
+init : () -> ( Model, Cmd Msg )
+init _ =
+    ( { serverList = ServerList.init
+      , page = ServerListPage
+      }
+    , requestServerConfigs ()
+    )
+
 
 
 -- UPDATE
 
 
 type Msg
-    = OpenCreateForm
+    = ServerListMsg ServerList.Msg
     | FormMsg ServerForm.Msg
 
 
-update : Msg -> Model -> Model
+update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        OpenCreateForm ->
-            { model | page = CreateForm (ServerForm.init (nextPort model)) }
+        ServerListMsg subMsg ->
+            let
+                ( newServerList, action ) =
+                    ServerList.update subMsg model.serverList
+            in
+            case action of
+                ServerList.RequestCreateForm port_ ->
+                    ( { model
+                        | serverList = newServerList
+                        , page = CreateFormPage (ServerForm.init port_)
+                      }
+                    , Cmd.none
+                    )
+
+                ServerList.NoAction ->
+                    ( { model | serverList = newServerList }
+                    , Cmd.none
+                    )
 
         FormMsg subMsg ->
             case model.page of
-                CreateForm formModel ->
+                CreateFormPage formModel ->
                     let
                         ( newForm, action ) =
                             ServerForm.update subMsg formModel
                     in
                     case action of
-                        Just _ ->
-                            -- Both Submit and Cancel return to server list for now
-                            { model | page = ServerList }
+                        Just ServerForm.SubmitForm ->
+                            ( { model | page = ServerListPage }
+                            , createServerConfig
+                                (Encode.object
+                                    [ ( "configName", Encode.string newForm.name )
+                                    , ( "authServerUrl", Encode.string newForm.authorizationUrl )
+                                    , ( "tokenUrl", Encode.string newForm.tokenEndpoint )
+                                    ]
+                                )
+                            )
+
+                        Just ServerForm.CancelForm ->
+                            ( { model | page = ServerListPage }
+                            , Cmd.none
+                            )
 
                         Nothing ->
-                            { model | page = CreateForm newForm }
+                            ( { model | page = CreateFormPage newForm }
+                            , Cmd.none
+                            )
 
                 _ ->
-                    model
+                    ( model, Cmd.none )
 
 
-nextPort : Model -> Int
-nextPort model =
-    let
-        basePort =
-            9500
-
-        usedPorts =
-            List.map .port_ model.servers
-    in
-    findAvailable basePort usedPorts
-
-
-findAvailable : Int -> List Int -> Int
-findAvailable candidate used =
-    if List.member candidate used then
-        findAvailable (candidate + 1) used
-
-    else
-        candidate
 
 
 -- VIEW
@@ -107,13 +126,10 @@ view model =
 viewPage : Model -> Html Msg
 viewPage model =
     case model.page of
-        ServerList ->
-            div [ class "page-content" ]
-                [ viewBody model
-                , viewFooter
-                ]
+        ServerListPage ->
+            Html.map ServerListMsg (ServerList.view model.serverList)
 
-        CreateForm formModel ->
+        CreateFormPage formModel ->
             Html.map FormMsg (ServerForm.view formModel)
 
 
@@ -125,55 +141,20 @@ viewHeader =
         ]
 
 
-viewBody : Model -> Html Msg
-viewBody model =
-    if List.isEmpty model.servers then
-        div [ class "empty-state" ]
-            [ span [ class "empty-label" ] [ text "No servers configured" ] ]
 
-    else
-        div [ class "server-list" ]
-            (List.map viewServerCard model.servers)
+-- SUBSCRIPTIONS
 
 
-viewServerCard : OAuthServer -> Html Msg
-viewServerCard server =
-    div [ class "server-card" ]
-        [ div [ class "server-card-left" ]
-            [ span [ class "server-name" ] [ text server.name ]
-            , span [ class "server-meta" ] [ text ("localhost:" ++ String.fromInt server.port_) ]
-            ]
-        , div [ class "server-card-right" ]
-            [ div [ class ("status-dot" ++ statusClass server.running) ] []
-            , span [ class "status-label" ] [ text (statusLabel server.running) ]
-            ]
-        ]
+subscriptions : Model -> Sub Msg
+subscriptions _ =
+    receiveServerConfigs
+        (\val ->
+            ServerListMsg
+                (ServerList.GotServerConfigs
+                    (Decode.decodeValue (Decode.list ServerList.serverConfigDecoder) val)
+                )
+        )
 
-
-statusClass : Bool -> String
-statusClass running =
-    if running then
-        " running"
-
-    else
-        ""
-
-
-statusLabel : Bool -> String
-statusLabel running =
-    if running then
-        "running"
-
-    else
-        "stopped"
-
-
-viewFooter : Html Msg
-viewFooter =
-    div [ class "footer" ]
-        [ button [ class "btn-create", onClick OpenCreateForm ]
-            [ text "+ Create new OAuth Server" ]
-        ]
 
 
 -- MAIN
@@ -181,8 +162,9 @@ viewFooter =
 
 main : Program () Model Msg
 main =
-    Browser.sandbox
+    Browser.element
         { init = init
         , update = update
+        , subscriptions = subscriptions
         , view = view
         }

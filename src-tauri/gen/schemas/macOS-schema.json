@@ -177,6 +177,24 @@
       "description": "Permission identifier",
       "oneOf": [
         {
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`",
+          "type": "string",
+          "const": "default",
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`"
+        },
+        {
+          "description": "Allow creating server configurations",
+          "type": "string",
+          "const": "allow-create-server-config",
+          "markdownDescription": "Allow creating server configurations"
+        },
+        {
+          "description": "Allow reading server configurations",
+          "type": "string",
+          "const": "allow-get-server-configs",
+          "markdownDescription": "Allow reading server configurations"
+        },
+        {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",
           "type": "string",
           "const": "core:default",
