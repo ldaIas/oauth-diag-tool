@@ -37,11 +37,13 @@ init =
 
 type Msg
     = OpenCreateForm
+    | DeleteServer String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
 type Action
     = RequestCreateForm Int
+    | RequestDeleteServer String
     | NoAction
 
 
@@ -50,6 +52,9 @@ update msg model =
     case msg of
         OpenCreateForm ->
             ( model, RequestCreateForm (nextPort model) )
+
+        DeleteServer id ->
+            ( model, RequestDeleteServer id )
 
         GotServerConfigs result ->
             case result of
@@ -156,6 +161,7 @@ viewServerCard server =
             , div [ class "server-card-right" ]
                 [ div [ class ("status-dot" ++ statusClass server.running) ] []
                 , span [ class "status-label" ] [ text (statusLabel server.running) ]
+                , button [ class "btn-delete", onClick (DeleteServer server.id) ] [ text "\u{1F5D1}" ]
                 ]
             ]
         , div [ class "server-card-details" ]

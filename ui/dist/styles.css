@@ -144,6 +144,29 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .status-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; }
 
+.btn-delete {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-left: 4px;
+}
+
+.btn-delete:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}
+
 .footer {
   padding-top: 20px;
   border-top: 1px solid var(--border);

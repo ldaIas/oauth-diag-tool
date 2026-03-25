@@ -16,6 +16,9 @@ import ServerList
 port createServerConfig : Encode.Value -> Cmd msg
 
 
+port deleteServerConfig : Encode.Value -> Cmd msg
+
+
 port requestServerConfigs : () -> Cmd msg
 
 
@@ -70,6 +73,11 @@ update msg model =
                         , page = CreateFormPage (ServerForm.init port_)
                       }
                     , Cmd.none
+                    )
+
+                ServerList.RequestDeleteServer id ->
+                    ( { model | serverList = newServerList }
+                    , deleteServerConfig (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
                 ServerList.NoAction ->

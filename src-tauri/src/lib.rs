@@ -72,10 +72,32 @@ fn get_server_configs(
     Ok(configs)
 }
 
+#[tauri::command]
+fn delete_server_config(
+    state: tauri::State<'_, Mutex<Connection>>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("delete_server_config called: id={}", id);
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "DELETE FROM server_configs WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| {
+        log::error!("failed to delete server config: {}", e);
+        e.to_string()
+    })?;
+    log::info!("server config deleted successfully");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs])
+    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

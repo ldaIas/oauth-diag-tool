@@ -35,6 +35,16 @@
         waitForTauri(loadServerConfigs);
       });
 
+      app.ports.deleteServerConfig.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("delete_server_config", {
+            id: parseInt(data.id, 10)
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("delete_server_config failed:", err); });
+        });
+      });
+
       app.ports.createServerConfig.subscribe(function(config) {
         console.log("createServerConfig called")
         waitForTauri(function() {

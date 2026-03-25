@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -11,3 +11,8 @@ commands.allow = ["create_server_config"]
 identifier = "allow-get-server-configs"
 description = "Allow reading server configurations"
 commands.allow = ["get_server_configs"]
+
+[[permission]]
+identifier = "allow-delete-server-config"
+description = "Allow deleting server configurations"
+commands.allow = ["delete_server_config"]

@@ -177,16 +177,22 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`",
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`"
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`"
         },
         {
           "description": "Allow creating server configurations",
           "type": "string",
           "const": "allow-create-server-config",
           "markdownDescription": "Allow creating server configurations"
+        },
+        {
+          "description": "Allow deleting server configurations",
+          "type": "string",
+          "const": "allow-delete-server-config",
+          "markdownDescription": "Allow deleting server configurations"
         },
         {
           "description": "Allow reading server configurations",
