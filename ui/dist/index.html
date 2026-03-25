@@ -57,6 +57,26 @@
           }).catch(function(err) { console.error("create_server_config failed:", err); });
         });
       });
+
+      app.ports.addClientToServer.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("add_client_to_server", {
+            authServerId: parseInt(data.authServerId, 10)
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("add_client_to_server failed:", err); });
+        });
+      });
+
+      app.ports.deleteClient.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("delete_client", {
+            id: parseInt(data.id, 10)
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("delete_client failed:", err); });
+        });
+      });
     </script>
   </body>
 </html>

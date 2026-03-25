@@ -19,6 +19,12 @@ port createServerConfig : Encode.Value -> Cmd msg
 port deleteServerConfig : Encode.Value -> Cmd msg
 
 
+port addClientToServer : Encode.Value -> Cmd msg
+
+
+port deleteClient : Encode.Value -> Cmd msg
+
+
 port requestServerConfigs : () -> Cmd msg
 
 
@@ -78,6 +84,16 @@ update msg model =
                 ServerList.RequestDeleteServer id ->
                     ( { model | serverList = newServerList }
                     , deleteServerConfig (Encode.object [ ( "id", Encode.string id ) ])
+                    )
+
+                ServerList.RequestAddClient serverId ->
+                    ( { model | serverList = newServerList }
+                    , addClientToServer (Encode.object [ ( "authServerId", Encode.string serverId ) ])
+                    )
+
+                ServerList.RequestDeleteClient clientId ->
+                    ( { model | serverList = newServerList }
+                    , deleteClient (Encode.object [ ( "id", Encode.string clientId ) ])
                     )
 
                 ServerList.NoAction ->

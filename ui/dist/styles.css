@@ -307,3 +307,84 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 
 .btn-submit:hover { background: var(--accent); color: var(--bg); }
+
+.client-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.client-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.client-section-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.client-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
+.btn-add-client {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px dashed var(--border-hi);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-add-client:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.client-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.client-card {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 14px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  gap: 8px;
+  margin-left: 16px;
+}
+
+.client-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.client-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.client-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}

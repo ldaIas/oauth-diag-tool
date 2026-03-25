@@ -9,6 +9,13 @@ import Json.Decode as Decode
 -- MODEL
 
 
+type alias Client =
+    { id : String
+    , clientId : String
+    , clientSecret : String
+    }
+
+
 type alias OAuthServer =
     { id : String
     , name : String
@@ -17,6 +24,7 @@ type alias OAuthServer =
     , tokenEndpoint : String
     , port_ : Int
     , running : Bool
+    , clients : List Client
     }
 
 
@@ -38,12 +46,16 @@ init =
 type Msg
     = OpenCreateForm
     | DeleteServer String
+    | AddClient String
+    | DeleteClient String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
 type Action
     = RequestCreateForm Int
     | RequestDeleteServer String
+    | RequestAddClient String
+    | RequestDeleteClient String
     | NoAction
 
 
@@ -55,6 +67,12 @@ update msg model =
 
         DeleteServer id ->
             ( model, RequestDeleteServer id )
+
+        AddClient serverId ->
+            ( model, RequestAddClient serverId )
+
+        DeleteClient clientId ->
+            ( model, RequestDeleteClient clientId )
 
         GotServerConfigs result ->
             case result of
@@ -94,10 +112,18 @@ findAvailable candidate used =
 -- DECODERS
 
 
+clientDecoder : Decode.Decoder Client
+clientDecoder =
+    Decode.map3 Client
+        (Decode.field "id" Decode.int |> Decode.map String.fromInt)
+        (Decode.field "clientId" Decode.string)
+        (Decode.field "clientSecret" Decode.string)
+
+
 serverConfigDecoder : Decode.Decoder OAuthServer
 serverConfigDecoder =
-    Decode.map4
-        (\id name authUrl tokUrl ->
+    Decode.map5
+        (\id name authUrl tokUrl clients ->
             let
                 port_ =
                     extractPort authUrl
@@ -109,12 +135,14 @@ serverConfigDecoder =
             , tokenEndpoint = tokUrl
             , port_ = port_
             , running = False
+            , clients = clients
             }
         )
         (Decode.field "id" Decode.int)
         (Decode.field "configName" Decode.string)
         (Decode.field "authServerUrl" Decode.string)
         (Decode.field "tokenUrl" Decode.string)
+        (Decode.field "clients" (Decode.list clientDecoder))
 
 
 extractPort : String -> Int
@@ -168,6 +196,32 @@ viewServerCard server =
             [ viewDetail "Issuer" server.issuerUrl
             , viewDetail "Authorization" server.authorizationUrl
             , viewDetail "Token" server.tokenEndpoint
+            ]
+        , div [ class "client-section" ]
+            [ div [ class "client-section-header" ]
+                [ span [ class "client-section-label" ] [ text "Clients" ]
+                , button [ class "btn-add-client", onClick (AddClient server.id) ] [ text "+ Add Client" ]
+                ]
+            , if List.isEmpty server.clients then
+                div [ class "client-empty" ] [ text "No clients" ]
+
+              else
+                div [ class "client-list" ]
+                    (List.map viewClientCard server.clients)
+            ]
+        ]
+
+
+viewClientCard : Client -> Html Msg
+viewClientCard client =
+    div [ class "client-card" ]
+        [ div [ class "client-card-header" ]
+            [ span [ class "client-label" ] [ text "Client" ]
+            , button [ class "btn-delete", onClick (DeleteClient client.id) ] [ text "\u{1F5D1}" ]
+            ]
+        , div [ class "client-details" ]
+            [ viewDetail "Client ID" client.clientId
+            , viewDetail "Secret" client.clientSecret
             ]
         ]
 

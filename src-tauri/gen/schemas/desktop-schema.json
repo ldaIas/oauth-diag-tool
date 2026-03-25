@@ -177,16 +177,28 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`",
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`"
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`"
+        },
+        {
+          "description": "Allow adding clients to server configurations",
+          "type": "string",
+          "const": "allow-add-client-to-server",
+          "markdownDescription": "Allow adding clients to server configurations"
         },
         {
           "description": "Allow creating server configurations",
           "type": "string",
           "const": "allow-create-server-config",
           "markdownDescription": "Allow creating server configurations"
+        },
+        {
+          "description": "Allow deleting clients",
+          "type": "string",
+          "const": "allow-delete-client",
+          "markdownDescription": "Allow deleting clients"
         },
         {
           "description": "Allow deleting server configurations",

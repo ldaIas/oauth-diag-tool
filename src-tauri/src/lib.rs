@@ -4,6 +4,17 @@ use tauri::Manager;
 use rusqlite::Connection;
 use serde::Serialize;
 use std::sync::Mutex;
+use rand::Rng;
+use rand::distributions::Alphanumeric;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OAuthClient {
+    id: i64,
+    client_id: String,
+    client_secret: String,
+    auth_server_id: i64,
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -12,6 +23,7 @@ struct ServerConfig {
     config_name: String,
     auth_server_url: String,
     token_url: String,
+    clients: Vec<OAuthClient>,
 }
 
 #[tauri::command]
@@ -63,13 +75,39 @@ fn get_server_configs(
                 config_name: row.get(1)?,
                 auth_server_url: row.get(2)?,
                 token_url: row.get(3)?,
+                clients: Vec::new(),
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
-    log::info!("get_server_configs returning {} configs", configs.len());
-    Ok(configs)
+
+    let mut result = configs;
+    let mut client_stmt = conn
+        .prepare("SELECT id, client_id, client_secret, auth_server_id FROM auth_server_clients WHERE auth_server_id = ?1")
+        .map_err(|e| {
+            log::error!("failed to prepare client query: {}", e);
+            e.to_string()
+        })?;
+
+    for server in &mut result {
+        let clients = client_stmt
+            .query_map(rusqlite::params![server.id], |row| {
+                Ok(OAuthClient {
+                    id: row.get(0)?,
+                    client_id: row.get(1)?,
+                    client_secret: row.get(2)?,
+                    auth_server_id: row.get(3)?,
+                })
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+        server.clients = clients;
+    }
+
+    log::info!("get_server_configs returning {} configs", result.len());
+    Ok(result)
 }
 
 #[tauri::command]
@@ -94,10 +132,58 @@ fn delete_server_config(
     Ok(())
 }
 
+#[tauri::command]
+fn add_client_to_server(
+    state: tauri::State<'_, Mutex<Connection>>,
+    auth_server_id: i64,
+) -> Result<(), String> {
+    log::info!("add_client_to_server called: auth_server_id={}", auth_server_id);
+    let mut rng = rand::thread_rng();
+    let client_id: String = (0..24).map(|_| rng.sample(Alphanumeric) as char).collect();
+    let client_secret: String = (0..48).map(|_| rng.sample(Alphanumeric) as char).collect();
+
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "INSERT INTO auth_server_clients (client_id, client_secret, auth_server_id) VALUES (?1, ?2, ?3)",
+        rusqlite::params![client_id, client_secret, auth_server_id],
+    )
+    .map_err(|e| {
+        log::error!("failed to insert client: {}", e);
+        e.to_string()
+    })?;
+    log::info!("client added successfully: client_id={}", client_id);
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_client(
+    state: tauri::State<'_, Mutex<Connection>>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("delete_client called: id={}", id);
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "DELETE FROM auth_server_clients WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| {
+        log::error!("failed to delete client: {}", e);
+        e.to_string()
+    })?;
+    log::info!("client deleted successfully");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config])
+    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config, add_client_to_server, delete_client])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
