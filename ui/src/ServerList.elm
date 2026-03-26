@@ -216,7 +216,7 @@ viewClientCard : Client -> Html Msg
 viewClientCard client =
     div [ class "client-card" ]
         [ div [ class "client-card-header" ]
-            [ span [ class "client-label" ] [ text "Client" ]
+            [ span [ class "client-label" ] [ text ("Client " ++ client.id) ]
             , button [ class "btn-delete", onClick (DeleteClient client.id) ] [ text "\u{1F5D1}" ]
             ]
         , div [ class "client-details" ]
