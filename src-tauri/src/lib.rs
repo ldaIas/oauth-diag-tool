@@ -118,7 +118,7 @@ fn get_server_configs(
 
     let mut result = configs;
     let mut client_stmt = conn
-        .prepare("SELECT id, client_id, client_secret, auth_server_id FROM auth_server_clients WHERE auth_server_id = ?1")
+        .prepare("SELECT id, client_id, client_secret, auth_server_id FROM auth_server_clients WHERE auth_server_id = ?1 ORDER BY id ASC")
         .map_err(|e| {
             log::error!("failed to prepare client query: {}", e);
             e.to_string()

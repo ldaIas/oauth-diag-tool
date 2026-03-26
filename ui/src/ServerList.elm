@@ -79,7 +79,9 @@ update msg model =
             ( model, RequestDeleteServer id )
 
         AddClient serverId ->
-            ( model, RequestAddClient serverId )
+            ( { model | expandedClients = Set.insert serverId model.expandedClients }
+            , RequestAddClient serverId
+            )
 
         DeleteClient clientId ->
             ( model, RequestDeleteClient clientId )
