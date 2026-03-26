@@ -134,6 +134,25 @@
           }).catch(function(err) { console.error("stop_server failed:", err); });
         });
       });
+
+      app.ports.authorizeClient.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("authorize_client", {
+            id: parseInt(data.id, 10)
+          }).then(function(result) {
+            result.configId = data.id;
+            app.ports.receiveAuthResult.send(result);
+          }).catch(function(err) {
+            console.error("authorize_client failed:", err);
+            app.ports.receiveAuthResult.send({
+              configId: data.id,
+              statusCode: 0,
+              headers: [],
+              body: "Error: " + err
+            });
+          });
+        });
+      });
     </script>
   </body>
 </html>

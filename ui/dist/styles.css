@@ -502,3 +502,89 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .extra-param-value {
   flex: 2;
 }
+
+.btn-authorize:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.btn-authorize:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.auth-response {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.auth-loading {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+}
+
+.auth-response-status,
+.auth-response-headers,
+.auth-response-body,
+.auth-response-error {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.auth-status-ok {
+  color: var(--accent);
+}
+
+.auth-status-error {
+  color: var(--danger);
+}
+
+.auth-headers-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 8px;
+}
+
+.auth-header-item {
+  display: flex;
+  gap: 8px;
+  font-size: 10px;
+}
+
+.auth-header-key {
+  color: var(--text-dim);
+  min-width: 140px;
+  flex-shrink: 0;
+}
+
+.auth-header-value {
+  color: var(--text);
+  word-break: break-all;
+}
+
+.auth-body-content {
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  overflow-x: auto;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.auth-error-text {
+  font-size: 11px;
+  color: var(--danger);
+}

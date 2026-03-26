@@ -45,6 +45,14 @@ struct ClientConfig {
     extra_params: String,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AuthResponse {
+    status_code: u16,
+    headers: Vec<(String, String)>,
+    body: String,
+}
+
 struct RunningServers {
     servers: HashMap<i64, JoinHandle<()>>,
     runtime: tokio::runtime::Runtime,
@@ -383,6 +391,72 @@ fn stop_server(
     }
 }
 
+#[tauri::command]
+async fn authorize_client(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+) -> Result<AuthResponse, String> {
+    log::info!("authorize_client called: id={}", id);
+
+    let (token_url, client_id, client_secret, scopes, extra_params) = {
+        let conn = state.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT token_url, client_id, client_secret, scopes, extra_params FROM oauth_client_configs WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(rusqlite::params![id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| e.to_string())?
+    };
+
+    let mut params = vec![
+        ("grant_type".to_string(), "client_credentials".to_string()),
+        ("client_id".to_string(), client_id),
+        ("client_secret".to_string(), client_secret),
+    ];
+
+    if !scopes.is_empty() {
+        params.push(("scope".to_string(), scopes));
+    }
+
+    if !extra_params.is_empty() {
+        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&extra_params) {
+            for (k, v) in map {
+                params.push((k, v));
+            }
+        }
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let status_code = response.status().as_u16();
+    let headers: Vec<(String, String)> = response
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_string()))
+        .collect();
+    let body = response.text().await.map_err(|e| e.to_string())?;
+
+    log::info!("authorize_client response: status={}", status_code);
+    Ok(AuthResponse {
+        status_code,
+        headers,
+        body,
+    })
+}
+
 fn extract_port(url: &str) -> u16 {
     url.replace("http://localhost:", "")
         .split('/')
@@ -405,6 +479,7 @@ pub fn run() {
         delete_client_config,
         start_server,
         stop_server,
+        authorize_client,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {

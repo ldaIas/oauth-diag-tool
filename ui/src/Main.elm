@@ -51,6 +51,12 @@ port startServer : Encode.Value -> Cmd msg
 port stopServer : Encode.Value -> Cmd msg
 
 
+port authorizeClient : Encode.Value -> Cmd msg
+
+
+port receiveAuthResult : (Decode.Value -> msg) -> Sub msg
+
+
 
 -- MODEL
 
@@ -204,6 +210,11 @@ update msg model =
                     , deleteClientConfig (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
+                ClientConfigList.RequestAuthorizeConfig id ->
+                    ( { model | clientConfigList = newConfigList }
+                    , authorizeClient (Encode.object [ ( "id", Encode.string id ) ])
+                    )
+
                 ClientConfigList.NoAction ->
                     ( { model | clientConfigList = newConfigList }
                     , Cmd.none
@@ -332,6 +343,13 @@ subscriptions _ =
                 ClientConfigListMsg
                     (ClientConfigList.GotClientConfigs
                         (Decode.decodeValue (Decode.list ClientConfigList.clientConfigDecoder) val)
+                    )
+            )
+        , receiveAuthResult
+            (\val ->
+                ClientConfigListMsg
+                    (ClientConfigList.GotAuthResult
+                        (Decode.decodeValue ClientConfigList.authResultDecoder val)
                     )
             )
         ]
