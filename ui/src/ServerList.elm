@@ -1,7 +1,7 @@
 module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
 
 import Html exposing (..)
-import Html.Attributes exposing (class)
+import Html.Attributes exposing (class, disabled)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
 
@@ -49,6 +49,8 @@ type Msg
     | AddClient String
     | DeleteClient String
     | ImportClient OAuthServer Client
+    | StartServer String
+    | StopServer String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
@@ -58,6 +60,8 @@ type Action
     | RequestAddClient String
     | RequestDeleteClient String
     | RequestImportClient { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String }
+    | RequestStartServer String
+    | RequestStopServer String
     | NoAction
 
 
@@ -87,6 +91,12 @@ update msg model =
                 , clientSecret = client.clientSecret
                 }
             )
+
+        StartServer id ->
+            ( model, RequestStartServer id )
+
+        StopServer id ->
+            ( model, RequestStopServer id )
 
         GotServerConfigs result ->
             case result of
@@ -136,8 +146,8 @@ clientDecoder =
 
 serverConfigDecoder : Decode.Decoder OAuthServer
 serverConfigDecoder =
-    Decode.map5
-        (\id name authUrl tokUrl clients ->
+    Decode.map6
+        (\id name authUrl tokUrl running clients ->
             let
                 port_ =
                     extractPort authUrl
@@ -148,7 +158,7 @@ serverConfigDecoder =
             , authorizationUrl = authUrl
             , tokenEndpoint = tokUrl
             , port_ = port_
-            , running = False
+            , running = running
             , clients = clients
             }
         )
@@ -156,6 +166,7 @@ serverConfigDecoder =
         (Decode.field "configName" Decode.string)
         (Decode.field "authServerUrl" Decode.string)
         (Decode.field "tokenUrl" Decode.string)
+        (Decode.field "running" Decode.bool)
         (Decode.field "clients" (Decode.list clientDecoder))
 
 
@@ -201,9 +212,15 @@ viewServerCard server =
                 , span [ class "server-meta" ] [ text ("localhost:" ++ String.fromInt server.port_) ]
                 ]
             , div [ class "server-card-right" ]
-                [ div [ class ("status-dot" ++ statusClass server.running) ] []
+                [ viewServerControls server
+                , div [ class ("status-dot" ++ statusClass server.running) ] []
                 , span [ class "status-label" ] [ text (statusLabel server.running) ]
-                , button [ class "btn-delete", onClick (DeleteServer server.id) ] [ text "\u{1F5D1}" ]
+                , button
+                    [ class "btn-delete"
+                    , onClick (DeleteServer server.id)
+                    , disabled server.running
+                    ]
+                    [ text "\u{1F5D1}" ]
                 ]
             ]
         , div [ class "server-card-details" ]
@@ -224,6 +241,17 @@ viewServerCard server =
                     (List.map (viewClientCard server) server.clients)
             ]
         ]
+
+
+viewServerControls : OAuthServer -> Html Msg
+viewServerControls server =
+    if server.running then
+        button [ class "btn-server-control btn-stop", onClick (StopServer server.id) ]
+            [ text "\u{25A0} Stop" ]
+
+    else
+        button [ class "btn-server-control btn-start", onClick (StartServer server.id) ]
+            [ text "\u{25B6} Start" ]
 
 
 viewClientCard : OAuthServer -> Client -> Html Msg

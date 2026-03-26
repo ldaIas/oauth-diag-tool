@@ -45,6 +45,12 @@ port requestClientConfigs : () -> Cmd msg
 port receiveClientConfigs : (Decode.Value -> msg) -> Sub msg
 
 
+port startServer : Encode.Value -> Cmd msg
+
+
+port stopServer : Encode.Value -> Cmd msg
+
+
 
 -- MODEL
 
@@ -130,6 +136,16 @@ update msg model =
                         , rightPage = ClientConfigCreateFormPage (ClientConfigForm.initFromImport data)
                       }
                     , Cmd.none
+                    )
+
+                ServerList.RequestStartServer id ->
+                    ( { model | serverList = newServerList }
+                    , startServer (Encode.object [ ( "id", Encode.string id ) ])
+                    )
+
+                ServerList.RequestStopServer id ->
+                    ( { model | serverList = newServerList }
+                    , stopServer (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
                 ServerList.NoAction ->

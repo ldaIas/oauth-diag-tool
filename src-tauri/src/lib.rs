@@ -1,11 +1,14 @@
 mod db;
+mod oauth_server;
 
 use tauri::Manager;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Alphanumeric;
+use tokio::task::JoinHandle;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +26,7 @@ struct ServerConfig {
     config_name: String,
     auth_server_url: String,
     token_url: String,
+    running: bool,
     clients: Vec<OAuthClient>,
 }
 
@@ -41,9 +45,14 @@ struct ClientConfig {
     extra_params: String,
 }
 
+struct RunningServers {
+    servers: HashMap<i64, JoinHandle<()>>,
+    runtime: tokio::runtime::Runtime,
+}
+
 #[tauri::command]
 fn create_server_config(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
     config_name: String,
     auth_server_url: String,
     token_url: String,
@@ -70,7 +79,8 @@ fn create_server_config(
 
 #[tauri::command]
 fn get_server_configs(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running_state: tauri::State<'_, Mutex<RunningServers>>,
 ) -> Result<Vec<ServerConfig>, String> {
     log::info!("get_server_configs called");
     let conn = state.lock().map_err(|e| {
@@ -90,6 +100,7 @@ fn get_server_configs(
                 config_name: row.get(1)?,
                 auth_server_url: row.get(2)?,
                 token_url: row.get(3)?,
+                running: false,
                 clients: Vec::new(),
             })
         })
@@ -105,7 +116,10 @@ fn get_server_configs(
             e.to_string()
         })?;
 
+    let running = running_state.lock().map_err(|e| e.to_string())?;
+
     for server in &mut result {
+        server.running = running.servers.contains_key(&server.id);
         let clients = client_stmt
             .query_map(rusqlite::params![server.id], |row| {
                 Ok(OAuthClient {
@@ -127,10 +141,21 @@ fn get_server_configs(
 
 #[tauri::command]
 fn delete_server_config(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running_state: tauri::State<'_, Mutex<RunningServers>>,
     id: i64,
 ) -> Result<(), String> {
     log::info!("delete_server_config called: id={}", id);
+
+    // Stop server if running
+    {
+        let mut running = running_state.lock().map_err(|e| e.to_string())?;
+        if let Some(handle) = running.servers.remove(&id) {
+            handle.abort();
+            log::info!("stopped running server before deletion: id={}", id);
+        }
+    }
+
     let conn = state.lock().map_err(|e| {
         log::error!("failed to lock db: {}", e);
         e.to_string()
@@ -149,7 +174,7 @@ fn delete_server_config(
 
 #[tauri::command]
 fn add_client_to_server(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
     auth_server_id: i64,
 ) -> Result<(), String> {
     log::info!("add_client_to_server called: auth_server_id={}", auth_server_id);
@@ -175,7 +200,7 @@ fn add_client_to_server(
 
 #[tauri::command]
 fn delete_client(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
     id: i64,
 ) -> Result<(), String> {
     log::info!("delete_client called: id={}", id);
@@ -197,7 +222,7 @@ fn delete_client(
 
 #[tauri::command]
 fn get_client_configs(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
 ) -> Result<Vec<ClientConfig>, String> {
     log::info!("get_client_configs called");
     let conn = state.lock().map_err(|e| {
@@ -234,7 +259,7 @@ fn get_client_configs(
 
 #[tauri::command]
 fn create_client_config(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
     name: String,
     issuer_url: String,
     authorization_url: String,
@@ -264,7 +289,7 @@ fn create_client_config(
 
 #[tauri::command]
 fn delete_client_config(
-    state: tauri::State<'_, Mutex<Connection>>,
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
     id: i64,
 ) -> Result<(), String> {
     log::info!("delete_client_config called: id={}", id);
@@ -284,10 +309,103 @@ fn delete_client_config(
     Ok(())
 }
 
+#[tauri::command]
+fn start_server(
+    db_state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running_state: tauri::State<'_, Mutex<RunningServers>>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("start_server called: id={}", id);
+
+    let mut running = running_state.lock().map_err(|e| e.to_string())?;
+
+    if running.servers.contains_key(&id) {
+        return Err("Server is already running".to_string());
+    }
+
+    // Look up the server config
+    let (auth_server_url, token_url) = {
+        let conn = db_state.lock().map_err(|e| e.to_string())?;
+        let mut stmt = conn
+            .prepare("SELECT auth_server_url, token_url FROM server_configs WHERE id = ?1")
+            .map_err(|e| e.to_string())?;
+        stmt.query_row(rusqlite::params![id], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+    };
+
+    let port = extract_port(&auth_server_url);
+    let issuer_url = format!("http://localhost:{}", port);
+
+    let server_state = oauth_server::ServerState {
+        db: Arc::clone(&db_state),
+        server_id: id,
+        issuer_url,
+        token_url,
+    };
+
+    let router = oauth_server::build_router(server_state);
+
+    let handle = running.runtime.spawn(async move {
+        let addr = format!("0.0.0.0:{}", port);
+        log::info!("Starting OAuth server on {}", addr);
+        let listener = match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => l,
+            Err(e) => {
+                log::error!("Failed to bind to {}: {}", addr, e);
+                return;
+            }
+        };
+        if let Err(e) = axum::serve(listener, router).await {
+            log::error!("OAuth server error: {}", e);
+        }
+    });
+
+    running.servers.insert(id, handle);
+    log::info!("server started on port {}", port);
+    Ok(())
+}
+
+#[tauri::command]
+fn stop_server(
+    running_state: tauri::State<'_, Mutex<RunningServers>>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("stop_server called: id={}", id);
+    let mut running = running_state.lock().map_err(|e| e.to_string())?;
+    if let Some(handle) = running.servers.remove(&id) {
+        handle.abort();
+        log::info!("server stopped: id={}", id);
+        Ok(())
+    } else {
+        Err("Server is not running".to_string())
+    }
+}
+
+fn extract_port(url: &str) -> u16 {
+    url.replace("http://localhost:", "")
+        .split('/')
+        .next()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(9500)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config, add_client_to_server, delete_client, get_client_configs, create_client_config, delete_client_config])
+    .invoke_handler(tauri::generate_handler![
+        create_server_config,
+        get_server_configs,
+        delete_server_config,
+        add_client_to_server,
+        delete_client,
+        get_client_configs,
+        create_client_config,
+        delete_client_config,
+        start_server,
+        stop_server,
+    ])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(
@@ -301,10 +419,34 @@ pub fn run() {
         .expect("failed to resolve app data directory");
       let conn = db::init(app_data_dir)
         .expect("failed to initialize database");
-      app.manage(std::sync::Mutex::new(conn));
+      let db = Arc::new(Mutex::new(conn));
+      app.manage(db);
+
+      let runtime = tokio::runtime::Runtime::new()
+          .expect("failed to create tokio runtime");
+      app.manage(Mutex::new(RunningServers {
+          servers: HashMap::new(),
+          runtime,
+      }));
 
       Ok(())
     })
+    .on_window_event(|_window, event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            // Stop all running servers when window is destroyed
+            // This is handled by RunningServers being dropped
+        }
+    })
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
+}
+
+impl Drop for RunningServers {
+    fn drop(&mut self) {
+        log::info!("Shutting down all running OAuth servers");
+        for (id, handle) in self.servers.drain() {
+            log::info!("Stopping server id={}", id);
+            handle.abort();
+        }
+    }
 }

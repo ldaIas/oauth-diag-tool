@@ -169,6 +169,37 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .status-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; }
 
+.btn-server-control {
+  padding: 3px 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-start:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
+.btn-stop:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+}
+
+.btn-delete:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 .btn-delete {
   width: 24px;
   height: 24px;

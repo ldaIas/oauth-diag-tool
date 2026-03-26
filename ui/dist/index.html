@@ -114,6 +114,26 @@
           }).catch(function(err) { console.error("delete_client_config failed:", err); });
         });
       });
+
+      app.ports.startServer.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("start_server", {
+            id: parseInt(data.id, 10)
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("start_server failed:", err); });
+        });
+      });
+
+      app.ports.stopServer.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("stop_server", {
+            id: parseInt(data.id, 10)
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("stop_server failed:", err); });
+        });
+      });
     </script>
   </body>
 </html>
