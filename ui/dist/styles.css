@@ -21,9 +21,34 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: flex;
   flex-direction: column;
   height: 100vh;
-  max-width: 780px;
   margin: 0 auto;
   padding: 32px 24px;
+}
+
+.split-layout {
+  display: flex;
+  flex: 1;
+  gap: 24px;
+  min-height: 0;
+}
+
+.panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
 }
 
 .header {
@@ -383,8 +408,66 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   text-transform: uppercase;
 }
 
+.client-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.btn-import {
+  padding: 3px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-import:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
 .client-details {
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.form-select {
+  appearance: none;
+  cursor: pointer;
+}
+
+.extra-params-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.extra-params-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.extra-param-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.extra-param-key {
+  flex: 1;
+}
+
+.extra-param-value {
+  flex: 2;
 }

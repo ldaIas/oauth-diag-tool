@@ -1,4 +1,4 @@
-module ServerList exposing (Action(..), Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
+module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
 
 import Html exposing (..)
 import Html.Attributes exposing (class)
@@ -48,6 +48,7 @@ type Msg
     | DeleteServer String
     | AddClient String
     | DeleteClient String
+    | ImportClient OAuthServer Client
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
@@ -56,6 +57,7 @@ type Action
     | RequestDeleteServer String
     | RequestAddClient String
     | RequestDeleteClient String
+    | RequestImportClient { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String }
     | NoAction
 
 
@@ -73,6 +75,18 @@ update msg model =
 
         DeleteClient clientId ->
             ( model, RequestDeleteClient clientId )
+
+        ImportClient server client ->
+            ( model
+            , RequestImportClient
+                { name = server.name ++ " - " ++ client.clientId
+                , issuerUrl = server.issuerUrl
+                , authorizationUrl = server.authorizationUrl
+                , tokenUrl = server.tokenEndpoint
+                , clientId = client.clientId
+                , clientSecret = client.clientSecret
+                }
+            )
 
         GotServerConfigs result ->
             case result of
@@ -207,17 +221,20 @@ viewServerCard server =
 
               else
                 div [ class "client-list" ]
-                    (List.map viewClientCard server.clients)
+                    (List.map (viewClientCard server) server.clients)
             ]
         ]
 
 
-viewClientCard : Client -> Html Msg
-viewClientCard client =
+viewClientCard : OAuthServer -> Client -> Html Msg
+viewClientCard server client =
     div [ class "client-card" ]
         [ div [ class "client-card-header" ]
             [ span [ class "client-label" ] [ text ("Client " ++ client.id) ]
-            , button [ class "btn-delete", onClick (DeleteClient client.id) ] [ text "\u{1F5D1}" ]
+            , div [ class "client-card-actions" ]
+                [ button [ class "btn-import", onClick (ImportClient server client) ] [ text "Import" ]
+                , button [ class "btn-delete", onClick (DeleteClient client.id) ] [ text "\u{1F5D1}" ]
+                ]
             ]
         , div [ class "client-details" ]
             [ viewDetail "Client ID" client.clientId

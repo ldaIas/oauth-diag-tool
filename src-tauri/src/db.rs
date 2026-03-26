@@ -26,6 +26,19 @@ pub fn init(app_data_dir: PathBuf) -> Result<Connection> {
             auth_server_id INTEGER NOT NULL,
             FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
             UNIQUE (auth_server_id, client_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS oauth_client_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            issuer_url TEXT NOT NULL,
+            authorization_url TEXT NOT NULL,
+            token_url TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            client_secret TEXT NOT NULL,
+            scopes TEXT NOT NULL DEFAULT '',
+            grant_type TEXT NOT NULL DEFAULT 'authorization_code',
+            extra_params TEXT NOT NULL DEFAULT ''
         );"
     )?;
 

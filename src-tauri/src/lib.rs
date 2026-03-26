@@ -26,6 +26,21 @@ struct ServerConfig {
     clients: Vec<OAuthClient>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ClientConfig {
+    id: i64,
+    name: String,
+    issuer_url: String,
+    authorization_url: String,
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scopes: String,
+    grant_type: String,
+    extra_params: String,
+}
+
 #[tauri::command]
 fn create_server_config(
     state: tauri::State<'_, Mutex<Connection>>,
@@ -180,10 +195,99 @@ fn delete_client(
     Ok(())
 }
 
+#[tauri::command]
+fn get_client_configs(
+    state: tauri::State<'_, Mutex<Connection>>,
+) -> Result<Vec<ClientConfig>, String> {
+    log::info!("get_client_configs called");
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    let mut stmt = conn
+        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params FROM oauth_client_configs")
+        .map_err(|e| {
+            log::error!("failed to prepare query: {}", e);
+            e.to_string()
+        })?;
+    let configs = stmt
+        .query_map([], |row| {
+            Ok(ClientConfig {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                issuer_url: row.get(2)?,
+                authorization_url: row.get(3)?,
+                token_url: row.get(4)?,
+                client_id: row.get(5)?,
+                client_secret: row.get(6)?,
+                scopes: row.get(7)?,
+                grant_type: row.get(8)?,
+                extra_params: row.get(9)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    log::info!("get_client_configs returning {} configs", configs.len());
+    Ok(configs)
+}
+
+#[tauri::command]
+fn create_client_config(
+    state: tauri::State<'_, Mutex<Connection>>,
+    name: String,
+    issuer_url: String,
+    authorization_url: String,
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scopes: String,
+    grant_type: String,
+    extra_params: String,
+) -> Result<(), String> {
+    log::info!("create_client_config called: name={}", name);
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params],
+    )
+    .map_err(|e| {
+        log::error!("failed to insert client config: {}", e);
+        e.to_string()
+    })?;
+    log::info!("client config inserted successfully");
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_client_config(
+    state: tauri::State<'_, Mutex<Connection>>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("delete_client_config called: id={}", id);
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "DELETE FROM oauth_client_configs WHERE id = ?1",
+        rusqlite::params![id],
+    )
+    .map_err(|e| {
+        log::error!("failed to delete client config: {}", e);
+        e.to_string()
+    })?;
+    log::info!("client config deleted successfully");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config, add_client_to_server, delete_client])
+    .invoke_handler(tauri::generate_handler![create_server_config, get_server_configs, delete_server_config, add_client_to_server, delete_client, get_client_configs, create_client_config, delete_client_config])
     .setup(|app| {
       if cfg!(debug_assertions) {
         app.handle().plugin(

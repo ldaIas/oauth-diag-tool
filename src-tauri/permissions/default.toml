@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-delete-client-config"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -26,3 +26,18 @@ commands.allow = ["add_client_to_server"]
 identifier = "allow-delete-client"
 description = "Allow deleting clients"
 commands.allow = ["delete_client"]
+
+[[permission]]
+identifier = "allow-get-client-configs"
+description = "Allow reading client configurations"
+commands.allow = ["get_client_configs"]
+
+[[permission]]
+identifier = "allow-create-client-config"
+description = "Allow creating client configurations"
+commands.allow = ["create_client_config"]
+
+[[permission]]
+identifier = "allow-delete-client-config"
+description = "Allow deleting client configurations"
+commands.allow = ["delete_client_config"]
