@@ -36,6 +36,9 @@ port receiveServerConfigs : (Decode.Value -> msg) -> Sub msg
 port createClientConfig : Encode.Value -> Cmd msg
 
 
+port updateClientConfig : Encode.Value -> Cmd msg
+
+
 port deleteClientConfig : Encode.Value -> Cmd msg
 
 
@@ -210,6 +213,28 @@ update msg model =
                     , deleteClientConfig (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
+                ClientConfigList.RequestEditConfig config ->
+                    ( { model
+                        | clientConfigList = newConfigList
+                        , rightPage =
+                            ClientConfigCreateFormPage
+                                (ClientConfigForm.initFromEdit
+                                    { id = config.id
+                                    , name = config.name
+                                    , issuerUrl = config.issuerUrl
+                                    , authorizationUrl = config.authorizationUrl
+                                    , tokenUrl = config.tokenUrl
+                                    , clientId = config.clientId
+                                    , clientSecret = config.clientSecret
+                                    , scopes = config.scopes
+                                    , grantType = config.grantType
+                                    , extraParams = config.extraParams
+                                    }
+                                )
+                      }
+                    , Cmd.none
+                    )
+
                 ClientConfigList.RequestAuthorizeConfig id ->
                     ( { model | clientConfigList = newConfigList }
                     , authorizeClient (Encode.object [ ( "id", Encode.string id ) ])
@@ -229,9 +254,8 @@ update msg model =
                     in
                     case action of
                         Just ClientConfigForm.SubmitForm ->
-                            ( { model | rightPage = ClientConfigListPage }
-                            , createClientConfig
-                                (Encode.object
+                            let
+                                fields =
                                     [ ( "name", Encode.string newForm.name )
                                     , ( "issuerUrl", Encode.string newForm.issuerUrl )
                                     , ( "authorizationUrl", Encode.string newForm.authorizationUrl )
@@ -242,7 +266,19 @@ update msg model =
                                     , ( "grantType", Encode.string newForm.grantType )
                                     , ( "extraParams", Encode.string (extraParamsToJson newForm.extraParams) )
                                     ]
-                                )
+
+                                cmd =
+                                    case newForm.editingId of
+                                        Just id ->
+                                            updateClientConfig
+                                                (Encode.object (( "id", Encode.string id ) :: fields))
+
+                                        Nothing ->
+                                            createClientConfig
+                                                (Encode.object fields)
+                            in
+                            ( { model | rightPage = ClientConfigListPage }
+                            , cmd
                             )
 
                         Just ClientConfigForm.CancelForm ->

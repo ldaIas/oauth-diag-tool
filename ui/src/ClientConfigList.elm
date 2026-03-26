@@ -5,6 +5,7 @@ import Html exposing (..)
 import Html.Attributes exposing (class)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
+import Set exposing (Set)
 
 
 -- MODEL
@@ -42,6 +43,7 @@ type AuthState
 type alias Model =
     { configs : List ClientConfig
     , authStates : Dict String AuthState
+    , expandedResults : Set String
     }
 
 
@@ -49,6 +51,7 @@ init : Model
 init =
     { configs = []
     , authStates = Dict.empty
+    , expandedResults = Set.empty
     }
 
 
@@ -59,7 +62,9 @@ init =
 type Msg
     = OpenCreateForm
     | DeleteConfig String
+    | EditConfig ClientConfig
     | AuthorizeConfig String
+    | ToggleResults String
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
 
@@ -67,6 +72,7 @@ type Msg
 type Action
     = RequestCreateForm
     | RequestDeleteConfig String
+    | RequestEditConfig ClientConfig
     | RequestAuthorizeConfig String
     | NoAction
 
@@ -80,15 +86,35 @@ update msg model =
         DeleteConfig id ->
             ( model, RequestDeleteConfig id )
 
+        EditConfig config ->
+            ( model, RequestEditConfig config )
+
         AuthorizeConfig id ->
-            ( { model | authStates = Dict.insert id Loading model.authStates }
+            ( { model
+                | authStates = Dict.insert id Loading model.authStates
+                , expandedResults = Set.insert id model.expandedResults
+              }
             , RequestAuthorizeConfig id
             )
+
+        ToggleResults id ->
+            let
+                newExpanded =
+                    if Set.member id model.expandedResults then
+                        Set.remove id model.expandedResults
+
+                    else
+                        Set.insert id model.expandedResults
+            in
+            ( { model | expandedResults = newExpanded }, NoAction )
 
         GotAuthResult result ->
             case result of
                 Ok authResult ->
-                    ( { model | authStates = Dict.insert authResult.configId (Done authResult) model.authStates }
+                    ( { model
+                        | authStates = Dict.insert authResult.configId (Done authResult) model.authStates
+                        , expandedResults = Set.insert authResult.configId model.expandedResults
+                      }
                     , NoAction
                     )
 
@@ -164,14 +190,32 @@ viewBody model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard model.authStates) model.configs)
+            (List.map (viewConfigCard model.authStates model.expandedResults) model.configs)
 
 
-viewConfigCard : Dict String AuthState -> ClientConfig -> Html Msg
-viewConfigCard authStates config =
+viewConfigCard : Dict String AuthState -> Set String -> ClientConfig -> Html Msg
+viewConfigCard authStates expandedResults config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
+
+        isExpanded =
+            Set.member config.id expandedResults
+
+        hasResult =
+            case state of
+                Idle ->
+                    False
+
+                _ ->
+                    True
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
     in
     div [ class "server-card" ]
         [ div [ class "server-card-header" ]
@@ -181,6 +225,7 @@ viewConfigCard authStates config =
                 ]
             , div [ class "server-card-right" ]
                 [ viewAuthorizeButton state config.id
+                , button [ class "btn-import", onClick (EditConfig config) ] [ text "Edit" ]
                 , button [ class "btn-delete", onClick (DeleteConfig config.id) ] [ text "\u{1F5D1}" ]
                 ]
             ]
@@ -201,7 +246,19 @@ viewConfigCard authStates config =
               else
                 viewDetail "Extra Params" config.extraParams
             ]
-        , viewAuthResponse state
+        , if hasResult then
+            div [ class "results-section" ]
+                [ span [ class "expandable-toggle", onClick (ToggleResults config.id) ]
+                    [ text (chevron ++ " Results") ]
+                , if isExpanded then
+                    viewAuthResponse state
+
+                  else
+                    text ""
+                ]
+
+          else
+            text ""
         ]
 
 

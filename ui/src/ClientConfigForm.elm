@@ -1,4 +1,4 @@
-module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromImport, update, view)
+module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, update, view)
 
 import Html exposing (..)
 import Html.Attributes exposing (class, placeholder, selected, type_, value)
@@ -15,7 +15,8 @@ type alias ExtraParam =
 
 
 type alias Model =
-    { name : String
+    { editingId : Maybe String
+    , name : String
     , issuerUrl : String
     , authorizationUrl : String
     , tokenUrl : String
@@ -29,7 +30,8 @@ type alias Model =
 
 init : Model
 init =
-    { name = ""
+    { editingId = Nothing
+    , name = ""
     , issuerUrl = ""
     , authorizationUrl = ""
     , tokenUrl = ""
@@ -43,7 +45,8 @@ init =
 
 initFromImport : { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String } -> Model
 initFromImport data =
-    { name = data.name
+    { editingId = Nothing
+    , name = data.name
     , issuerUrl = data.issuerUrl
     , authorizationUrl = data.authorizationUrl
     , tokenUrl = data.tokenUrl
@@ -53,6 +56,66 @@ initFromImport data =
     , grantType = "authorization_code"
     , extraParams = []
     }
+
+
+initFromEdit : { id : String, name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String, scopes : String, grantType : String, extraParams : String } -> Model
+initFromEdit data =
+    { editingId = Just data.id
+    , name = data.name
+    , issuerUrl = data.issuerUrl
+    , authorizationUrl = data.authorizationUrl
+    , tokenUrl = data.tokenUrl
+    , clientId = data.clientId
+    , clientSecret = data.clientSecret
+    , scopes = data.scopes
+    , grantType = data.grantType
+    , extraParams = parseExtraParams data.extraParams
+    }
+
+
+parseExtraParams : String -> List ExtraParam
+parseExtraParams str =
+    if String.isEmpty str then
+        []
+
+    else
+        let
+            trimmed =
+                str
+                    |> String.trim
+                    |> (\s ->
+                            if String.startsWith "{" s && String.endsWith "}" s then
+                                String.slice 1 (String.length s - 1) s
+
+                            else
+                                s
+                       )
+
+            pairs =
+                String.split "," trimmed
+        in
+        List.filterMap
+            (\pair ->
+                case String.split ":" pair of
+                    [ k, v ] ->
+                        Just
+                            { key = String.trim k |> stripQuotes
+                            , value = String.trim v |> stripQuotes
+                            }
+
+                    _ ->
+                        Nothing
+            )
+            pairs
+
+
+stripQuotes : String -> String
+stripQuotes s =
+    if String.startsWith "\"" s && String.endsWith "\"" s then
+        String.slice 1 (String.length s - 1) s
+
+    else
+        s
 
 
 
@@ -175,9 +238,18 @@ extraParamsToJson params =
 
 view : Model -> Html Msg
 view model =
+    let
+        ( title, submitLabel ) =
+            case model.editingId of
+                Just _ ->
+                    ( "Edit Client Configuration", "Save Config" )
+
+                Nothing ->
+                    ( "New Client Configuration", "Create Config" )
+    in
     div [ class "form-overlay" ]
         [ div [ class "form-panel" ]
-            [ div [ class "form-title" ] [ text "New Client Configuration" ]
+            [ div [ class "form-title" ] [ text title ]
             , viewInput "Name" model.name SetName "My Client Config"
             , viewInput "Issuer URL" model.issuerUrl SetIssuerUrl "https://auth.example.com"
             , viewInput "Authorization URL" model.authorizationUrl SetAuthorizationUrl "https://auth.example.com/authorize"
@@ -189,7 +261,7 @@ view model =
             , viewExtraParams model.extraParams
             , div [ class "form-actions" ]
                 [ button [ class "btn-cancel", onClick Cancel ] [ text "Cancel" ]
-                , button [ class "btn-submit", onClick Submit ] [ text "Create Config" ]
+                , button [ class "btn-submit", onClick Submit ] [ text submitLabel ]
                 ]
             ]
         ]

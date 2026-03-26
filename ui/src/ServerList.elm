@@ -4,6 +4,7 @@ import Html exposing (..)
 import Html.Attributes exposing (class, disabled)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
+import Set exposing (Set)
 
 
 -- MODEL
@@ -30,12 +31,14 @@ type alias OAuthServer =
 
 type alias Model =
     { servers : List OAuthServer
+    , expandedClients : Set String
     }
 
 
 init : Model
 init =
     { servers = []
+    , expandedClients = Set.empty
     }
 
 
@@ -51,6 +54,7 @@ type Msg
     | ImportClient OAuthServer Client
     | StartServer String
     | StopServer String
+    | ToggleClients String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
@@ -97,6 +101,17 @@ update msg model =
 
         StopServer id ->
             ( model, RequestStopServer id )
+
+        ToggleClients serverId ->
+            let
+                newExpanded =
+                    if Set.member serverId model.expandedClients then
+                        Set.remove serverId model.expandedClients
+
+                    else
+                        Set.insert serverId model.expandedClients
+            in
+            ( { model | expandedClients = newExpanded }, NoAction )
 
         GotServerConfigs result ->
             case result of
@@ -200,11 +215,25 @@ viewBody model =
 
     else
         div [ class "server-list" ]
-            (List.map viewServerCard model.servers)
+            (List.map (viewServerCard model.expandedClients) model.servers)
 
 
-viewServerCard : OAuthServer -> Html Msg
-viewServerCard server =
+viewServerCard : Set String -> OAuthServer -> Html Msg
+viewServerCard expandedClients server =
+    let
+        isExpanded =
+            Set.member server.id expandedClients
+
+        clientCount =
+            List.length server.clients
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+    in
     div [ class "server-card" ]
         [ div [ class "server-card-header" ]
             [ div [ class "server-card-left" ]
@@ -230,15 +259,20 @@ viewServerCard server =
             ]
         , div [ class "client-section" ]
             [ div [ class "client-section-header" ]
-                [ span [ class "client-section-label" ] [ text "Clients" ]
+                [ span [ class "expandable-toggle", onClick (ToggleClients server.id) ]
+                    [ text (chevron ++ " Clients (" ++ String.fromInt clientCount ++ ")") ]
                 , button [ class "btn-add-client", onClick (AddClient server.id) ] [ text "+ Add Client" ]
                 ]
-            , if List.isEmpty server.clients then
-                div [ class "client-empty" ] [ text "No clients" ]
+            , if isExpanded then
+                if List.isEmpty server.clients then
+                    div [ class "client-empty" ] [ text "No clients" ]
+
+                else
+                    div [ class "client-list" ]
+                        (List.map (viewClientCard server) server.clients)
 
               else
-                div [ class "client-list" ]
-                    (List.map (viewClientCard server) server.clients)
+                text ""
             ]
         ]
 

@@ -105,6 +105,25 @@
         });
       });
 
+      app.ports.updateClientConfig.subscribe(function(config) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("update_client_config", {
+            id: parseInt(config.id, 10),
+            name: config.name,
+            issuerUrl: config.issuerUrl,
+            authorizationUrl: config.authorizationUrl,
+            tokenUrl: config.tokenUrl,
+            clientId: config.clientId,
+            clientSecret: config.clientSecret,
+            scopes: config.scopes,
+            grantType: config.grantType,
+            extraParams: config.extraParams
+          }).then(function() {
+            loadClientConfigs();
+          }).catch(function(err) { console.error("update_client_config failed:", err); });
+        });
+      });
+
       app.ports.deleteClientConfig.subscribe(function(data) {
         waitForTauri(function() {
           window.__TAURI__.core.invoke("delete_client_config", {

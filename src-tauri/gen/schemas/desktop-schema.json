@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-authorize-client`",
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-authorize-client`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-authorize-client`"
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-authorize-client`"
         },
         {
           "description": "Allow adding clients to server configurations",
@@ -247,6 +247,12 @@
           "type": "string",
           "const": "allow-stop-server",
           "markdownDescription": "Allow stopping OAuth servers"
+        },
+        {
+          "description": "Allow updating client configurations",
+          "type": "string",
+          "const": "allow-update-client-config",
+          "markdownDescription": "Allow updating client configurations"
         },
         {
           "description": "Default core plugins set.\n#### This default permission set includes:\n\n- `core:path:default`\n- `core:event:default`\n- `core:window:default`\n- `core:webview:default`\n- `core:app:default`\n- `core:image:default`\n- `core:resources:default`\n- `core:menu:default`\n- `core:tray:default`",

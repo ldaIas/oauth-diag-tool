@@ -296,6 +296,37 @@ fn create_client_config(
 }
 
 #[tauri::command]
+fn update_client_config(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+    name: String,
+    issuer_url: String,
+    authorization_url: String,
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scopes: String,
+    grant_type: String,
+    extra_params: String,
+) -> Result<(), String> {
+    log::info!("update_client_config called: id={}", id);
+    let conn = state.lock().map_err(|e| {
+        log::error!("failed to lock db: {}", e);
+        e.to_string()
+    })?;
+    conn.execute(
+        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9 WHERE id = ?10",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, id],
+    )
+    .map_err(|e| {
+        log::error!("failed to update client config: {}", e);
+        e.to_string()
+    })?;
+    log::info!("client config updated successfully");
+    Ok(())
+}
+
+#[tauri::command]
 fn delete_client_config(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
     id: i64,
@@ -476,6 +507,7 @@ pub fn run() {
         delete_client,
         get_client_configs,
         create_client_config,
+        update_client_config,
         delete_client_config,
         start_server,
         stop_server,
