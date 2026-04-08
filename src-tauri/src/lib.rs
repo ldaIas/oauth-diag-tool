@@ -1,7 +1,7 @@
 mod db;
 mod oauth_server;
 
-use tauri::{Manager, WebviewWindowBuilder, WebviewUrl};
+use tauri::Manager;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -484,7 +484,6 @@ fn get_callback_url() -> String {
 
 #[tauri::command]
 async fn authorize_client(
-    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
     pending: tauri::State<'_, PendingAuthorizations>,
     id: i64,
@@ -524,7 +523,7 @@ async fn authorize_client(
             pending_map.insert(id, cancel_tx);
         }
         let pending_clone = Arc::clone(&pending);
-        let result = authorize_code_flow(&app, authorization_url, token_url, client_id, client_secret, scopes, extra_map, cancel_rx).await;
+        let result = authorize_code_flow(authorization_url, token_url, client_id, client_secret, scopes, extra_map, cancel_rx).await;
         // Clean up the pending entry
         if let Ok(mut pending_map) = pending_clone.lock() {
             pending_map.remove(&id);
@@ -582,7 +581,6 @@ async fn authorize_client_credentials(
 }
 
 async fn authorize_code_flow(
-    app: &tauri::AppHandle,
     authorization_url: String,
     token_url: String,
     client_id: String,
@@ -635,32 +633,11 @@ async fn authorize_code_flow(
             .ok();
     });
 
-    // Open a Tauri WebView window for authorization (with devtools in debug builds)
-    let auth_window = WebviewWindowBuilder::new(
-        app,
-        "auth-window",
-        WebviewUrl::External(auth_url.parse().map_err(|e: url::ParseError| e.to_string())?),
-    )
-    .title("Authorize")
-    .inner_size(600.0, 700.0)
-    .build()
-    .map_err(|e| format!("Failed to open auth window: {}", e))?;
+    // Open Chrome with devtools enabled
+    open_chrome(&auth_url)?;
+    log::info!("Opened Chrome for authorization");
 
-    #[cfg(debug_assertions)]
-    auth_window.open_devtools();
-
-    log::info!("Opened auth window for authorization");
-
-    // Also close the window if user closes it manually — treat as cancel
-    let (window_close_tx, mut window_close_rx) = tokio::sync::mpsc::channel::<()>(1);
-    let close_sender = window_close_tx.clone();
-    auth_window.on_window_event(move |event| {
-        if let tauri::WindowEvent::Destroyed = event {
-            let _ = close_sender.try_send(());
-        }
-    });
-
-    // Wait for the callback, cancellation, window close, or timeout
+    // Wait for the callback, cancellation, or timeout
     let code = tokio::select! {
         result = rx => {
             match result {
@@ -668,13 +645,11 @@ async fn authorize_code_flow(
                 Ok(Err(e)) => {
                     let _ = shutdown_tx.send(());
                     let _ = server_handle.await;
-                    close_auth_window(&auth_window);
                     return Err(format!("Authorization failed: {}", e));
                 }
                 Err(_) => {
                     let _ = shutdown_tx.send(());
                     let _ = server_handle.await;
-                    close_auth_window(&auth_window);
                     return Err("Callback channel closed unexpectedly".to_string());
                 }
             }
@@ -682,26 +657,18 @@ async fn authorize_code_flow(
         _ = cancel_rx => {
             let _ = shutdown_tx.send(());
             let _ = server_handle.await;
-            close_auth_window(&auth_window);
             return Err("Authorization cancelled".to_string());
-        }
-        _ = window_close_rx.recv() => {
-            let _ = shutdown_tx.send(());
-            let _ = server_handle.await;
-            return Err("Authorization cancelled (window closed)".to_string());
         }
         _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
             let _ = shutdown_tx.send(());
             let _ = server_handle.await;
-            close_auth_window(&auth_window);
             return Err("Authorization timed out (5 minutes)".to_string());
         }
     };
 
-    // Shut down the callback server and close the auth window
+    // Shut down the callback server
     let _ = shutdown_tx.send(());
     let _ = server_handle.await;
-    close_auth_window(&auth_window);
     log::info!("Received auth code, exchanging for tokens");
 
     // Exchange the code for tokens
@@ -745,10 +712,19 @@ async fn build_auth_response(response: reqwest::Response) -> Result<AuthResponse
     })
 }
 
-fn close_auth_window(window: &tauri::WebviewWindow) {
-    if let Err(e) = window.close() {
-        log::warn!("Failed to close auth window: {}", e);
-    }
+fn open_chrome(url: &str) -> Result<(), String> {
+    // Use a dedicated user-data-dir so --auto-open-devtools-for-tabs takes effect
+    // even if Chrome is already running
+    let tmp_dir = std::env::temp_dir().join("oauth-diag-chrome");
+    std::process::Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        .arg("--auto-open-devtools-for-tabs")
+        .arg(format!("--user-data-dir={}", tmp_dir.display()))
+        .arg("--no-first-run")
+        .arg("--no-default-browser-check")
+        .arg(url)
+        .spawn()
+        .map_err(|e| format!("Failed to open Chrome: {}", e))?;
+    Ok(())
 }
 
 fn extract_port(url: &str) -> u16 {
