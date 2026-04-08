@@ -64,6 +64,7 @@ type Msg
     | DeleteConfig String
     | EditConfig ClientConfig
     | AuthorizeConfig String
+    | CancelAuthorize String
     | ToggleResults String
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
@@ -74,6 +75,7 @@ type Action
     | RequestDeleteConfig String
     | RequestEditConfig ClientConfig
     | RequestAuthorizeConfig String
+    | RequestCancelAuthorize String
     | NoAction
 
 
@@ -95,6 +97,11 @@ update msg model =
                 , expandedResults = Set.insert id model.expandedResults
               }
             , RequestAuthorizeConfig id
+            )
+
+        CancelAuthorize id ->
+            ( { model | authStates = Dict.insert id Idle model.authStates }
+            , RequestCancelAuthorize id
             )
 
         ToggleResults id ->
@@ -174,27 +181,27 @@ andMap =
 -- VIEW
 
 
-view : Model -> Html Msg
-view model =
+view : String -> Model -> Html Msg
+view callbackUrl model =
     div [ class "page-content" ]
-        [ viewBody model
+        [ viewBody callbackUrl model
         , viewFooter
         ]
 
 
-viewBody : Model -> Html Msg
-viewBody model =
+viewBody : String -> Model -> Html Msg
+viewBody callbackUrl model =
     if List.isEmpty model.configs then
         div [ class "empty-state" ]
             [ span [ class "empty-label" ] [ text "No client configurations" ] ]
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard model.authStates model.expandedResults) model.configs)
+            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults) model.configs)
 
 
-viewConfigCard : Dict String AuthState -> Set String -> ClientConfig -> Html Msg
-viewConfigCard authStates expandedResults config =
+viewConfigCard : String -> Dict String AuthState -> Set String -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl authStates expandedResults config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
@@ -235,6 +242,11 @@ viewConfigCard authStates expandedResults config =
             , viewDetail "Token" config.tokenUrl
             , viewDetail "Client ID" config.clientId
             , viewDetail "Secret" config.clientSecret
+            , if config.grantType == "authorization_code" && not (String.isEmpty callbackUrl) then
+                viewDetail "Callback URL" callbackUrl
+
+              else
+                text ""
             , if String.isEmpty config.scopes then
                 text ""
 
@@ -266,8 +278,12 @@ viewAuthorizeButton : AuthState -> String -> Html Msg
 viewAuthorizeButton state configId =
     case state of
         Loading ->
-            button [ class "btn-server-control btn-authorize", Html.Attributes.disabled True ]
-                [ text "Authorizing..." ]
+            span []
+                [ button [ class "btn-server-control btn-authorize", Html.Attributes.disabled True ]
+                    [ text "Authorizing..." ]
+                , button [ class "btn-server-control btn-cancel-auth", onClick (CancelAuthorize configId) ]
+                    [ text "Cancel" ]
+                ]
 
         _ ->
             button [ class "btn-server-control btn-authorize", onClick (AuthorizeConfig configId) ]

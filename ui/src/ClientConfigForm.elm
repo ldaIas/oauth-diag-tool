@@ -236,8 +236,8 @@ extraParamsToJson params =
 -- VIEW
 
 
-view : Model -> Html Msg
-view model =
+view : String -> Model -> Html Msg
+view callbackUrl model =
     let
         ( title, submitLabel ) =
             case model.editingId of
@@ -258,6 +258,11 @@ view model =
             , viewInput "Client Secret" model.clientSecret SetClientSecret "client-secret"
             , viewInput "Scopes" model.scopes SetScopes "openid profile email"
             , viewGrantType model.grantType
+            , if model.grantType == "authorization_code" && not (String.isEmpty callbackUrl) then
+                viewReadonlyField "Callback URL" callbackUrl
+
+              else
+                text ""
             , viewExtraParams model.extraParams
             , div [ class "form-actions" ]
                 [ button [ class "btn-cancel", onClick Cancel ] [ text "Cancel" ]
@@ -272,6 +277,14 @@ viewInput label val toMsg hint =
     div [ class "form-field" ]
         [ span [ class "form-label" ] [ text label ]
         , input [ class "form-input", type_ "text", value val, placeholder hint, onInput toMsg ] []
+        ]
+
+
+viewReadonlyField : String -> String -> Html Msg
+viewReadonlyField label val =
+    div [ class "form-field" ]
+        [ span [ class "form-label" ] [ text label ]
+        , input [ class "form-input form-input-readonly", type_ "text", value val, Html.Attributes.readonly True ] []
         ]
 
 

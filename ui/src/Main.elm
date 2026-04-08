@@ -57,6 +57,15 @@ port stopServer : Encode.Value -> Cmd msg
 port authorizeClient : Encode.Value -> Cmd msg
 
 
+port cancelAuthorization : Encode.Value -> Cmd msg
+
+
+port requestCallbackUrl : () -> Cmd msg
+
+
+port receiveCallbackUrl : (Decode.Value -> msg) -> Sub msg
+
+
 port receiveAuthResult : (Decode.Value -> msg) -> Sub msg
 
 
@@ -79,6 +88,7 @@ type alias Model =
     , clientConfigList : ClientConfigList.Model
     , leftPage : LeftPage
     , rightPage : RightPage
+    , callbackUrl : String
     }
 
 
@@ -88,10 +98,12 @@ init _ =
       , clientConfigList = ClientConfigList.init
       , leftPage = ServerListPage
       , rightPage = ClientConfigListPage
+      , callbackUrl = ""
       }
     , Cmd.batch
         [ requestServerConfigs ()
         , requestClientConfigs ()
+        , requestCallbackUrl ()
         ]
     )
 
@@ -105,6 +117,7 @@ type Msg
     | ServerFormMsg ServerForm.Msg
     | ClientConfigListMsg ClientConfigList.Msg
     | ClientConfigFormMsg ClientConfigForm.Msg
+    | GotCallbackUrl String
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -240,10 +253,18 @@ update msg model =
                     , authorizeClient (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
+                ClientConfigList.RequestCancelAuthorize id ->
+                    ( { model | clientConfigList = newConfigList }
+                    , cancelAuthorization (Encode.object [ ( "id", Encode.string id ) ])
+                    )
+
                 ClientConfigList.NoAction ->
                     ( { model | clientConfigList = newConfigList }
                     , Cmd.none
                     )
+
+        GotCallbackUrl url ->
+            ( { model | callbackUrl = url }, Cmd.none )
 
         ClientConfigFormMsg subMsg ->
             case model.rightPage of
@@ -346,10 +367,10 @@ viewRightPage : Model -> Html Msg
 viewRightPage model =
     case model.rightPage of
         ClientConfigListPage ->
-            Html.map ClientConfigListMsg (ClientConfigList.view model.clientConfigList)
+            Html.map ClientConfigListMsg (ClientConfigList.view model.callbackUrl model.clientConfigList)
 
         ClientConfigCreateFormPage formModel ->
-            Html.map ClientConfigFormMsg (ClientConfigForm.view formModel)
+            Html.map ClientConfigFormMsg (ClientConfigForm.view model.callbackUrl formModel)
 
 
 viewHeader : Html Msg
@@ -387,6 +408,15 @@ subscriptions _ =
                     (ClientConfigList.GotAuthResult
                         (Decode.decodeValue ClientConfigList.authResultDecoder val)
                     )
+            )
+        , receiveCallbackUrl
+            (\val ->
+                case Decode.decodeValue Decode.string val of
+                    Ok url ->
+                        GotCallbackUrl url
+
+                    Err _ ->
+                        GotCallbackUrl ""
             )
         ]
 

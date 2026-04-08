@@ -154,12 +154,29 @@
         });
       });
 
+      app.ports.requestCallbackUrl.subscribe(function() {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("get_callback_url").then(function(url) {
+            app.ports.receiveCallbackUrl.send(url);
+          }).catch(function(err) { console.error("get_callback_url failed:", err); });
+        });
+      });
+
+      app.ports.cancelAuthorization.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("cancel_authorization", {
+            id: parseInt(data.id, 10)
+          }).catch(function(err) { console.error("cancel_authorization failed:", err); });
+        });
+      });
+
       app.ports.authorizeClient.subscribe(function(data) {
         waitForTauri(function() {
           window.__TAURI__.core.invoke("authorize_client", {
             id: parseInt(data.id, 10)
           }).then(function(result) {
             result.configId = data.id;
+            try { result.body = JSON.stringify(JSON.parse(result.body), null, 2); } catch(e) {}
             app.ports.receiveAuthResult.send(result);
           }).catch(function(err) {
             console.error("authorize_client failed:", err);

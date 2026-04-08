@@ -1,14 +1,23 @@
 mod db;
 mod oauth_server;
 
-use tauri::Manager;
+use tauri::{Manager, WebviewWindowBuilder, WebviewUrl};
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use tokio::task::JoinHandle;
+use axum::{
+    extract::{Query, State as AxumState},
+    response::Html,
+    routing::get as axum_get,
+    Router as AxumRouter,
+};
+
+const CALLBACK_PORT: u16 = 5757;
+const CALLBACK_URL: &str = "http://localhost:5757/callback";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +66,8 @@ struct RunningServers {
     servers: HashMap<i64, JoinHandle<()>>,
     runtime: tokio::runtime::Runtime,
 }
+
+type PendingAuthorizations = Arc<Mutex<HashMap<i64, tokio::sync::oneshot::Sender<()>>>>;
 
 #[tauri::command]
 fn create_server_config(
@@ -382,6 +393,7 @@ fn start_server(
         server_id: id,
         issuer_url,
         token_url,
+        auth_codes: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let router = oauth_server::build_router(server_state);
@@ -422,17 +434,67 @@ fn stop_server(
     }
 }
 
+#[derive(Deserialize)]
+struct CallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Clone)]
+struct CallbackState {
+    tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<String, String>>>>>,
+    expected_state: String,
+}
+
+async fn callback_handler(
+    AxumState(state): AxumState<CallbackState>,
+    Query(params): Query<CallbackQuery>,
+) -> Html<String> {
+    let result = if let Some(error) = params.error {
+        let desc = params.error_description.unwrap_or_default();
+        Err(format!("{}: {}", error, desc))
+    } else if let Some(code) = params.code {
+        if params.state.as_deref() == Some(state.expected_state.as_str()) {
+            Ok(code)
+        } else {
+            Err("State parameter mismatch".to_string())
+        }
+    } else {
+        Err("No code or error in callback".to_string())
+    };
+
+    let is_ok = result.is_ok();
+    if let Some(tx) = state.tx.lock().unwrap().take() {
+        let _ = tx.send(result);
+    }
+
+    if is_ok {
+        Html("<html><body style=\"font-family:sans-serif;text-align:center;padding:60px\"><h1>Authorization Successful</h1><p>You can close this tab and return to the diagnostic tool.</p></body></html>".to_string())
+    } else {
+        Html("<html><body style=\"font-family:sans-serif;text-align:center;padding:60px\"><h1>Authorization Failed</h1><p>Check the diagnostic tool for details.</p></body></html>".to_string())
+    }
+}
+
+#[tauri::command]
+fn get_callback_url() -> String {
+    CALLBACK_URL.to_string()
+}
+
 #[tauri::command]
 async fn authorize_client(
+    app: tauri::AppHandle,
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    pending: tauri::State<'_, PendingAuthorizations>,
     id: i64,
 ) -> Result<AuthResponse, String> {
     log::info!("authorize_client called: id={}", id);
 
-    let (token_url, client_id, client_secret, scopes, extra_params) = {
+    let (grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params) = {
         let conn = state.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT token_url, client_id, client_secret, scopes, extra_params FROM oauth_client_configs WHERE id = ?1")
+            .prepare("SELECT grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params FROM oauth_client_configs WHERE id = ?1")
             .map_err(|e| e.to_string())?;
         stmt.query_row(rusqlite::params![id], |row| {
             Ok((
@@ -441,11 +503,59 @@ async fn authorize_client(
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
             ))
         })
         .map_err(|e| e.to_string())?
     };
 
+    let extra_map: HashMap<String, String> = if extra_params.is_empty() {
+        HashMap::new()
+    } else {
+        serde_json::from_str(&extra_params).unwrap_or_default()
+    };
+
+    if grant_type == "authorization_code" {
+        // Register a cancel channel for this authorization
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
+        {
+            let mut pending_map = pending.lock().map_err(|e| e.to_string())?;
+            pending_map.insert(id, cancel_tx);
+        }
+        let pending_clone = Arc::clone(&pending);
+        let result = authorize_code_flow(&app, authorization_url, token_url, client_id, client_secret, scopes, extra_map, cancel_rx).await;
+        // Clean up the pending entry
+        if let Ok(mut pending_map) = pending_clone.lock() {
+            pending_map.remove(&id);
+        }
+        result
+    } else {
+        authorize_client_credentials(token_url, client_id, client_secret, scopes, extra_map).await
+    }
+}
+
+#[tauri::command]
+fn cancel_authorization(
+    pending: tauri::State<'_, PendingAuthorizations>,
+    id: i64,
+) -> Result<(), String> {
+    log::info!("cancel_authorization called: id={}", id);
+    let mut pending_map = pending.lock().map_err(|e| e.to_string())?;
+    if let Some(tx) = pending_map.remove(&id) {
+        let _ = tx.send(());
+        log::info!("authorization cancelled for id={}", id);
+    }
+    Ok(())
+}
+
+async fn authorize_client_credentials(
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scopes: String,
+    extra_map: HashMap<String, String>,
+) -> Result<AuthResponse, String> {
     let mut params = vec![
         ("grant_type".to_string(), "client_credentials".to_string()),
         ("client_id".to_string(), client_id),
@@ -456,12 +566,8 @@ async fn authorize_client(
         params.push(("scope".to_string(), scopes));
     }
 
-    if !extra_params.is_empty() {
-        if let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&extra_params) {
-            for (k, v) in map {
-                params.push((k, v));
-            }
-        }
+    for (k, v) in extra_map {
+        params.push((k, v));
     }
 
     let client = reqwest::Client::new();
@@ -472,6 +578,157 @@ async fn authorize_client(
         .await
         .map_err(|e| e.to_string())?;
 
+    build_auth_response(response).await
+}
+
+async fn authorize_code_flow(
+    app: &tauri::AppHandle,
+    authorization_url: String,
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    scopes: String,
+    extra_map: HashMap<String, String>,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<AuthResponse, String> {
+    let state_param = uuid::Uuid::new_v4().to_string();
+
+    let redirect_uri = format!("http://localhost:{}/callback", CALLBACK_PORT);
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
+        .await
+        .map_err(|e| format!("Failed to bind callback server on port {}: {}", CALLBACK_PORT, e))?;
+    log::info!("Auth code callback server on port {}", CALLBACK_PORT);
+
+    // Build authorization URL
+    let auth_url = {
+        let mut query = form_urlencoded::Serializer::new(String::new());
+        query.append_pair("response_type", "code");
+        query.append_pair("client_id", &client_id);
+        query.append_pair("redirect_uri", &redirect_uri);
+        query.append_pair("state", &state_param);
+        if !scopes.is_empty() {
+            query.append_pair("scope", &scopes);
+        }
+        for (k, v) in &extra_map {
+            query.append_pair(k, v);
+        }
+        format!("{}?{}", authorization_url, query.finish())
+    };
+
+    // Set up oneshot channel and callback server
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let callback_state = CallbackState {
+        tx: Arc::new(Mutex::new(Some(tx))),
+        expected_state: state_param,
+    };
+    let router = AxumRouter::new()
+        .route("/callback", axum_get(callback_handler))
+        .with_state(callback_state);
+
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server_handle = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .ok();
+    });
+
+    // Open a Tauri WebView window for authorization (with devtools in debug builds)
+    let auth_window = WebviewWindowBuilder::new(
+        app,
+        "auth-window",
+        WebviewUrl::External(auth_url.parse().map_err(|e: url::ParseError| e.to_string())?),
+    )
+    .title("Authorize")
+    .inner_size(600.0, 700.0)
+    .build()
+    .map_err(|e| format!("Failed to open auth window: {}", e))?;
+
+    #[cfg(debug_assertions)]
+    auth_window.open_devtools();
+
+    log::info!("Opened auth window for authorization");
+
+    // Also close the window if user closes it manually — treat as cancel
+    let (window_close_tx, mut window_close_rx) = tokio::sync::mpsc::channel::<()>(1);
+    let close_sender = window_close_tx.clone();
+    auth_window.on_window_event(move |event| {
+        if let tauri::WindowEvent::Destroyed = event {
+            let _ = close_sender.try_send(());
+        }
+    });
+
+    // Wait for the callback, cancellation, window close, or timeout
+    let code = tokio::select! {
+        result = rx => {
+            match result {
+                Ok(Ok(code)) => code,
+                Ok(Err(e)) => {
+                    let _ = shutdown_tx.send(());
+                    let _ = server_handle.await;
+                    close_auth_window(&auth_window);
+                    return Err(format!("Authorization failed: {}", e));
+                }
+                Err(_) => {
+                    let _ = shutdown_tx.send(());
+                    let _ = server_handle.await;
+                    close_auth_window(&auth_window);
+                    return Err("Callback channel closed unexpectedly".to_string());
+                }
+            }
+        }
+        _ = cancel_rx => {
+            let _ = shutdown_tx.send(());
+            let _ = server_handle.await;
+            close_auth_window(&auth_window);
+            return Err("Authorization cancelled".to_string());
+        }
+        _ = window_close_rx.recv() => {
+            let _ = shutdown_tx.send(());
+            let _ = server_handle.await;
+            return Err("Authorization cancelled (window closed)".to_string());
+        }
+        _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
+            let _ = shutdown_tx.send(());
+            let _ = server_handle.await;
+            close_auth_window(&auth_window);
+            return Err("Authorization timed out (5 minutes)".to_string());
+        }
+    };
+
+    // Shut down the callback server and close the auth window
+    let _ = shutdown_tx.send(());
+    let _ = server_handle.await;
+    close_auth_window(&auth_window);
+    log::info!("Received auth code, exchanging for tokens");
+
+    // Exchange the code for tokens
+    let mut params = vec![
+        ("grant_type".to_string(), "authorization_code".to_string()),
+        ("code".to_string(), code),
+        ("redirect_uri".to_string(), redirect_uri),
+        ("client_id".to_string(), client_id),
+        ("client_secret".to_string(), client_secret),
+    ];
+
+    for (k, v) in extra_map {
+        params.push((k, v));
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    build_auth_response(response).await
+}
+
+async fn build_auth_response(response: reqwest::Response) -> Result<AuthResponse, String> {
     let status_code = response.status().as_u16();
     let headers: Vec<(String, String)> = response
         .headers()
@@ -486,6 +743,12 @@ async fn authorize_client(
         headers,
         body,
     })
+}
+
+fn close_auth_window(window: &tauri::WebviewWindow) {
+    if let Err(e) = window.close() {
+        log::warn!("Failed to close auth window: {}", e);
+    }
 }
 
 fn extract_port(url: &str) -> u16 {
@@ -511,7 +774,9 @@ pub fn run() {
         delete_client_config,
         start_server,
         stop_server,
+        get_callback_url,
         authorize_client,
+        cancel_authorization,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
@@ -535,6 +800,9 @@ pub fn run() {
           servers: HashMap::new(),
           runtime,
       }));
+
+      let pending: PendingAuthorizations = Arc::new(Mutex::new(HashMap::new()));
+      app.manage(pending);
 
       Ok(())
     })

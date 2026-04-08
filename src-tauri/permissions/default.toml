@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-start-server", "allow-stop-server", "allow-authorize-client"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-cancel-authorization"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -58,6 +58,16 @@ description = "Allow stopping OAuth servers"
 commands.allow = ["stop_server"]
 
 [[permission]]
+identifier = "allow-get-callback-url"
+description = "Allow getting the OAuth callback URL"
+commands.allow = ["get_callback_url"]
+
+[[permission]]
 identifier = "allow-authorize-client"
 description = "Allow authorizing with OAuth client configurations"
 commands.allow = ["authorize_client"]
+
+[[permission]]
+identifier = "allow-cancel-authorization"
+description = "Allow cancelling a pending authorization"
+commands.allow = ["cancel_authorization"]
