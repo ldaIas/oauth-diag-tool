@@ -1,5 +1,7 @@
+use base64::Engine;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use axum::{
@@ -50,6 +52,7 @@ struct CallbackQuery {
 struct CallbackState {
     tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<String, String>>>>>,
     expected_state: String,
+    auth_url: String,
 }
 
 pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
@@ -226,6 +229,20 @@ pub async fn authorize_client_credentials(
     build_auth_response(response).await
 }
 
+fn generate_pkce() -> (String, String) {
+    use rand::Rng;
+    let mut rng = rand::thread_rng();
+    let verifier_bytes: Vec<u8> = (0..32).map(|_| rng.gen::<u8>()).collect();
+    let code_verifier = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&verifier_bytes);
+
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let digest = hasher.finalize();
+    let code_challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest);
+
+    (code_verifier, code_challenge)
+}
+
 pub async fn authorize_code_flow(
     authorization_url: String,
     token_url: String,
@@ -237,6 +254,9 @@ pub async fn authorize_code_flow(
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<AuthResponse, String> {
     let state_param = uuid::Uuid::new_v4().to_string();
+
+    let (code_verifier, code_challenge) = generate_pkce();
+    log::info!("PKCE: generated code_verifier and code_challenge (S256)");
 
     let redirect_uri = format!("http://localhost:{}/callback", CALLBACK_PORT);
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
@@ -261,6 +281,12 @@ pub async fn authorize_code_flow(
         if !scopes.is_empty() && !disabled.contains("scope") {
             query.append_pair("scope", &scopes);
         }
+        if !disabled.contains("code_challenge") {
+            query.append_pair("code_challenge", &code_challenge);
+        }
+        if !disabled.contains("code_challenge_method") {
+            query.append_pair("code_challenge_method", "S256");
+        }
         for (k, v) in &extra_map {
             if !disabled.contains(k) {
                 query.append_pair(k, v);
@@ -273,8 +299,10 @@ pub async fn authorize_code_flow(
     let callback_state = CallbackState {
         tx: Arc::new(Mutex::new(Some(tx))),
         expected_state: state_param,
+        auth_url: auth_url.clone(),
     };
     let router = AxumRouter::new()
+        .route("/start", axum_get(trampoline_handler))
         .route("/callback", axum_get(callback_handler))
         .with_state(callback_state);
 
@@ -288,7 +316,8 @@ pub async fn authorize_code_flow(
             .ok();
     });
 
-    open_chrome(&auth_url)?;
+    let trampoline_url = format!("http://localhost:{}/start", CALLBACK_PORT);
+    open_chrome(&trampoline_url)?;
     log::info!("Opened Chrome for authorization");
 
     let code = tokio::select! {
@@ -337,6 +366,9 @@ pub async fn authorize_code_flow(
     if !disabled.contains("client_secret") {
         params.push(("client_secret".to_string(), client_secret));
     }
+    if !disabled.contains("code_verifier") {
+        params.push(("code_verifier".to_string(), code_verifier));
+    }
 
     for (k, v) in extra_map {
         if !disabled.contains(&k) {
@@ -363,6 +395,26 @@ pub fn cancel(pending: &PendingAuthorizations, id: i64) -> Result<(), String> {
         log::info!("authorization cancelled for id={}", id);
     }
     Ok(())
+}
+
+async fn trampoline_handler(
+    AxumState(state): AxumState<CallbackState>,
+) -> Html<String> {
+    let auth_url = &state.auth_url;
+    Html(format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>Starting OAuth flow...</title></head>
+<body>
+<p>Opening authorization flow...</p>
+<script>
+setTimeout(() => {{
+    window.location.href = '{auth_url}';
+}}, 400);
+</script>
+</body>
+</html>"#
+    ))
 }
 
 async fn callback_handler(

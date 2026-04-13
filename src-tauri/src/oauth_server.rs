@@ -8,6 +8,7 @@ use axum::{
 use base64::Engine;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
@@ -25,6 +26,8 @@ pub struct ServerState {
 pub struct AuthCodeEntry {
     pub client_id: String,
     pub redirect_uri: String,
+    pub code_challenge: Option<String>,
+    pub code_challenge_method: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -48,6 +51,7 @@ struct OpenIdConfiguration {
     grant_types_supported: Vec<String>,
     response_types_supported: Vec<String>,
     token_endpoint_auth_methods_supported: Vec<String>,
+    code_challenge_methods_supported: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +61,8 @@ struct AuthorizeQuery {
     redirect_uri: Option<String>,
     state: Option<String>,
     scope: Option<String>,
+    code_challenge: Option<String>,
+    code_challenge_method: Option<String>,
 }
 
 pub fn build_router(state: ServerState) -> Router {
@@ -84,6 +90,10 @@ async fn openid_configuration(
             "client_secret_post".to_string(),
             "client_secret_basic".to_string(),
         ],
+        code_challenge_methods_supported: vec![
+            "S256".to_string(),
+            "plain".to_string(),
+        ],
     })
 }
 
@@ -105,6 +115,8 @@ async fn authorize_endpoint(
     let redirect_uri = params.redirect_uri.as_deref().unwrap_or("");
     let request_state = params.state.as_deref().unwrap_or("");
     let scope = params.scope.as_deref().unwrap_or("");
+    let code_challenge = params.code_challenge.as_deref().unwrap_or("");
+    let code_challenge_method = params.code_challenge_method.as_deref().unwrap_or("");
 
     // Validate that the client_id exists for this server
     let client_exists = {
@@ -159,6 +171,8 @@ button:hover {{ background: #c73652; }}
 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
 <input type="hidden" name="state" value="{request_state}">
 <input type="hidden" name="scope" value="{scope}">
+<input type="hidden" name="code_challenge" value="{code_challenge}">
+<input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
 <input type="hidden" name="action" value="approve">
 <button type="submit">Approve</button>
 </form>
@@ -166,6 +180,8 @@ button:hover {{ background: #c73652; }}
 <input type="hidden" name="client_id" value="{client_id}">
 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
 <input type="hidden" name="state" value="{request_state}">
+<input type="hidden" name="code_challenge" value="{code_challenge}">
+<input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
 <input type="hidden" name="action" value="deny">
 <button type="submit" class="deny">Deny</button>
 </form>
@@ -189,6 +205,8 @@ async fn authorize_submit(
     let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_default();
     let request_state = params.get("state").cloned().unwrap_or_default();
     let action = params.get("action").cloned().unwrap_or_default();
+    let code_challenge = params.get("code_challenge").cloned().unwrap_or_default();
+    let code_challenge_method = params.get("code_challenge_method").cloned().unwrap_or_default();
 
     if action == "deny" {
         let mut redirect = form_urlencoded::Serializer::new(String::new());
@@ -209,6 +227,8 @@ async fn authorize_submit(
         codes.insert(code.clone(), AuthCodeEntry {
             client_id: client_id.clone(),
             redirect_uri: redirect_uri.clone(),
+            code_challenge: if code_challenge.is_empty() { None } else { Some(code_challenge) },
+            code_challenge_method: if code_challenge_method.is_empty() { None } else { Some(code_challenge_method) },
         });
     }
 
@@ -314,6 +334,49 @@ fn token_authorization_code(
                 error_description: "redirect_uri mismatch".to_string(),
             }),
         ));
+    }
+
+    // Validate PKCE code_verifier if a code_challenge was provided
+    if let Some(ref expected_challenge) = entry.code_challenge {
+        let code_verifier = params.iter().find(|(k, _)| k == "code_verifier")
+            .map(|(_, v)| v.as_str())
+            .ok_or_else(|| (
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_request".to_string(),
+                    error_description: "Missing 'code_verifier' parameter (PKCE required)".to_string(),
+                }),
+            ))?;
+
+        let method = entry.code_challenge_method.as_deref().unwrap_or("plain");
+        let computed_challenge = match method {
+            "S256" => {
+                let mut hasher = Sha256::new();
+                hasher.update(code_verifier.as_bytes());
+                let digest = hasher.finalize();
+                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+            }
+            "plain" => code_verifier.to_string(),
+            _ => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "invalid_request".to_string(),
+                        error_description: format!("Unsupported code_challenge_method: {}", method),
+                    }),
+                ));
+            }
+        };
+
+        if computed_challenge != *expected_challenge {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                Json(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: "PKCE code_verifier does not match code_challenge".to_string(),
+                }),
+            ));
+        }
     }
 
     // Authenticate the client

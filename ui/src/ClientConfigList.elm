@@ -380,6 +380,13 @@ viewParamToggles expandedParams config =
             else
                 []
 
+        pkceParams =
+            if config.grantType == "authorization_code" then
+                [ "code_challenge", "code_challenge_method", "code_verifier" ]
+
+            else
+                []
+
         extraParamKeys =
             case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
                 Ok dict ->
@@ -389,7 +396,7 @@ viewParamToggles expandedParams config =
                     []
 
         allParams =
-            standardParams ++ authCodeParams ++ extraParamKeys
+            standardParams ++ authCodeParams ++ pkceParams ++ extraParamKeys
     in
     div [ class "param-toggles" ]
         [ span [ class "expandable-toggle", onClick (ToggleParamsSection config.id) ]
