@@ -242,6 +242,7 @@ update msg model =
                                     , scopes = config.scopes
                                     , grantType = config.grantType
                                     , extraParams = config.extraParams
+                                    , disabledParams = config.disabledParams
                                     }
                                 )
                       }
@@ -256,6 +257,25 @@ update msg model =
                 ClientConfigList.RequestCancelAuthorize id ->
                     ( { model | clientConfigList = newConfigList }
                     , cancelAuthorization (Encode.object [ ( "id", Encode.string id ) ])
+                    )
+
+                ClientConfigList.RequestUpdateConfig config ->
+                    ( { model | clientConfigList = newConfigList }
+                    , updateClientConfig
+                        (Encode.object
+                            [ ( "id", Encode.string config.id )
+                            , ( "name", Encode.string config.name )
+                            , ( "issuerUrl", Encode.string config.issuerUrl )
+                            , ( "authorizationUrl", Encode.string config.authorizationUrl )
+                            , ( "tokenUrl", Encode.string config.tokenUrl )
+                            , ( "clientId", Encode.string config.clientId )
+                            , ( "clientSecret", Encode.string config.clientSecret )
+                            , ( "scopes", Encode.string config.scopes )
+                            , ( "grantType", Encode.string config.grantType )
+                            , ( "extraParams", Encode.string config.extraParams )
+                            , ( "disabledParams", Encode.string config.disabledParams )
+                            ]
+                        )
                     )
 
                 ClientConfigList.NoAction ->
@@ -286,6 +306,7 @@ update msg model =
                                     , ( "scopes", Encode.string newForm.scopes )
                                     , ( "grantType", Encode.string newForm.grantType )
                                     , ( "extraParams", Encode.string (extraParamsToJson newForm.extraParams) )
+                                    , ( "disabledParams", Encode.string newForm.disabledParams )
                                     ]
 
                                 cmd =

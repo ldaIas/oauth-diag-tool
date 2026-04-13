@@ -98,7 +98,8 @@
             clientSecret: config.clientSecret,
             scopes: config.scopes,
             grantType: config.grantType,
-            extraParams: config.extraParams
+            extraParams: config.extraParams,
+            disabledParams: config.disabledParams
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("create_client_config failed:", err); });
@@ -117,7 +118,8 @@
             clientSecret: config.clientSecret,
             scopes: config.scopes,
             grantType: config.grantType,
-            extraParams: config.extraParams
+            extraParams: config.extraParams,
+            disabledParams: config.disabledParams
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("update_client_config failed:", err); });

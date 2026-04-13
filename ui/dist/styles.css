@@ -627,3 +627,63 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
+
+.param-toggles {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.param-toggle-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  padding: 4px 0;
+}
+
+.param-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.param-toggle input[type="checkbox"] {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--border-hi);
+  border-radius: 3px;
+  background: var(--bg);
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.param-toggle input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.param-toggle input[type="checkbox"]:checked::after {
+  content: '\2713';
+  display: block;
+  text-align: center;
+  font-size: 10px;
+  line-height: 14px;
+  color: var(--bg);
+  font-weight: 600;
+}
+
+.param-toggle input[type="checkbox"]:hover {
+  border-color: var(--accent);
+}
+
+.param-toggle-name {
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: 0.02em;
+}

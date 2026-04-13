@@ -2,9 +2,10 @@ module ClientConfigList exposing (Action(..), AuthResult, ClientConfig, Model, M
 
 import Dict exposing (Dict)
 import Html exposing (..)
-import Html.Attributes exposing (class)
+import Html.Attributes exposing (checked, class, type_)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
+import Json.Encode as Encode
 import Set exposing (Set)
 
 
@@ -22,6 +23,7 @@ type alias ClientConfig =
     , scopes : String
     , grantType : String
     , extraParams : String
+    , disabledParams : String
     }
 
 
@@ -44,6 +46,7 @@ type alias Model =
     { configs : List ClientConfig
     , authStates : Dict String AuthState
     , expandedResults : Set String
+    , expandedParams : Set String
     }
 
 
@@ -52,6 +55,7 @@ init =
     { configs = []
     , authStates = Dict.empty
     , expandedResults = Set.empty
+    , expandedParams = Set.empty
     }
 
 
@@ -66,6 +70,8 @@ type Msg
     | AuthorizeConfig String
     | CancelAuthorize String
     | ToggleResults String
+    | ToggleParam String String
+    | ToggleParamsSection String
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
 
@@ -76,6 +82,7 @@ type Action
     | RequestEditConfig ClientConfig
     | RequestAuthorizeConfig String
     | RequestCancelAuthorize String
+    | RequestUpdateConfig ClientConfig
     | NoAction
 
 
@@ -114,6 +121,41 @@ update msg model =
                         Set.insert id model.expandedResults
             in
             ( { model | expandedResults = newExpanded }, NoAction )
+
+        ToggleParamsSection id ->
+            let
+                newExpanded =
+                    if Set.member id model.expandedParams then
+                        Set.remove id model.expandedParams
+
+                    else
+                        Set.insert id model.expandedParams
+            in
+            ( { model | expandedParams = newExpanded }, NoAction )
+
+        ToggleParam configId paramName ->
+            let
+                updatedConfigs =
+                    List.map
+                        (\config ->
+                            if config.id == configId then
+                                { config | disabledParams = toggleDisabledParam paramName config.disabledParams }
+
+                            else
+                                config
+                        )
+                        model.configs
+
+                updatedConfig =
+                    List.filter (\c -> c.id == configId) updatedConfigs
+                        |> List.head
+            in
+            case updatedConfig of
+                Just config ->
+                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
+
+                Nothing ->
+                    ( model, NoAction )
 
         GotAuthResult result ->
             case result of
@@ -154,6 +196,7 @@ clientConfigDecoder =
         (Decode.field "scopes" Decode.string)
         |> andMap (Decode.field "grantType" Decode.string)
         |> andMap (Decode.field "extraParams" Decode.string)
+        |> andMap (Decode.field "disabledParams" Decode.string)
 
 
 authResultDecoder : Decode.Decoder AuthResult
@@ -178,6 +221,45 @@ andMap =
 
 
 
+-- DISABLED PARAMS HELPERS
+
+
+isParamDisabled : String -> String -> Bool
+isParamDisabled paramName disabledParams =
+    String.contains ("\"" ++ paramName ++ "\":true") disabledParams
+
+
+toggleDisabledParam : String -> String -> String
+toggleDisabledParam paramName disabledParams =
+    let
+        decoded : Dict String Bool
+        decoded =
+            case Decode.decodeString (Decode.dict Decode.bool) disabledParams of
+                Ok dict ->
+                    dict
+
+                Err _ ->
+                    Dict.empty
+
+        updated =
+            if Dict.member paramName decoded then
+                Dict.remove paramName decoded
+
+            else
+                Dict.insert paramName True decoded
+
+        entries =
+            Dict.toList updated
+                |> List.map (\( k, _ ) -> "\"" ++ k ++ "\":true")
+    in
+    if List.isEmpty entries then
+        "{}"
+
+    else
+        "{" ++ String.join "," entries ++ "}"
+
+
+
 -- VIEW
 
 
@@ -197,11 +279,11 @@ viewBody callbackUrl model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults) model.configs)
+            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams) model.configs)
 
 
-viewConfigCard : String -> Dict String AuthState -> Set String -> ClientConfig -> Html Msg
-viewConfigCard callbackUrl authStates expandedResults config =
+viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl authStates expandedResults expandedParams config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
@@ -258,6 +340,7 @@ viewConfigCard callbackUrl authStates expandedResults config =
               else
                 viewDetail "Extra Params" config.extraParams
             ]
+        , viewParamToggles expandedParams config
         , if hasResult then
             div [ class "results-section" ]
                 [ span [ class "expandable-toggle", onClick (ToggleResults config.id) ]
@@ -271,6 +354,69 @@ viewConfigCard callbackUrl authStates expandedResults config =
 
           else
             text ""
+        ]
+
+
+viewParamToggles : Set String -> ClientConfig -> Html Msg
+viewParamToggles expandedParams config =
+    let
+        isExpanded =
+            Set.member config.id expandedParams
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+
+        standardParams =
+            [ "client_id", "client_secret", "scope" ]
+
+        authCodeParams =
+            if config.grantType == "authorization_code" then
+                [ "response_type", "redirect_uri", "state" ]
+
+            else
+                []
+
+        extraParamKeys =
+            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
+                Ok dict ->
+                    Dict.keys dict
+
+                Err _ ->
+                    []
+
+        allParams =
+            standardParams ++ authCodeParams ++ extraParamKeys
+    in
+    div [ class "param-toggles" ]
+        [ span [ class "expandable-toggle", onClick (ToggleParamsSection config.id) ]
+            [ text (chevron ++ " Send Parameters") ]
+        , if isExpanded then
+            div [ class "param-toggle-list" ]
+                (List.map (viewParamToggle config.id config.disabledParams) allParams)
+
+          else
+            text ""
+        ]
+
+
+viewParamToggle : String -> String -> String -> Html Msg
+viewParamToggle configId disabledParams paramName =
+    let
+        disabled =
+            isParamDisabled paramName disabledParams
+    in
+    label [ class "param-toggle" ]
+        [ input
+            [ type_ "checkbox"
+            , checked (not disabled)
+            , onClick (ToggleParam configId paramName)
+            ]
+            []
+        , span [ class "param-toggle-name" ] [ text paramName ]
         ]
 
 
