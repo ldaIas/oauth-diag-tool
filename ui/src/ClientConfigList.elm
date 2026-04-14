@@ -24,6 +24,7 @@ type alias ClientConfig =
     , grantType : String
     , extraParams : String
     , disabledParams : String
+    , disabledTokenParams : String
     }
 
 
@@ -47,6 +48,7 @@ type alias Model =
     , authStates : Dict String AuthState
     , expandedResults : Set String
     , expandedParams : Set String
+    , expandedTokenParams : Set String
     }
 
 
@@ -56,6 +58,7 @@ init =
     , authStates = Dict.empty
     , expandedResults = Set.empty
     , expandedParams = Set.empty
+    , expandedTokenParams = Set.empty
     }
 
 
@@ -71,7 +74,9 @@ type Msg
     | CancelAuthorize String
     | ToggleResults String
     | ToggleParam String String
+    | ToggleTokenParam String String
     | ToggleParamsSection String
+    | ToggleTokenParamsSection String
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
 
@@ -133,6 +138,17 @@ update msg model =
             in
             ( { model | expandedParams = newExpanded }, NoAction )
 
+        ToggleTokenParamsSection id ->
+            let
+                newExpanded =
+                    if Set.member id model.expandedTokenParams then
+                        Set.remove id model.expandedTokenParams
+
+                    else
+                        Set.insert id model.expandedTokenParams
+            in
+            ( { model | expandedTokenParams = newExpanded }, NoAction )
+
         ToggleParam configId paramName ->
             let
                 updatedConfigs =
@@ -140,6 +156,30 @@ update msg model =
                         (\config ->
                             if config.id == configId then
                                 { config | disabledParams = toggleDisabledParam paramName config.disabledParams }
+
+                            else
+                                config
+                        )
+                        model.configs
+
+                updatedConfig =
+                    List.filter (\c -> c.id == configId) updatedConfigs
+                        |> List.head
+            in
+            case updatedConfig of
+                Just config ->
+                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
+
+                Nothing ->
+                    ( model, NoAction )
+
+        ToggleTokenParam configId paramName ->
+            let
+                updatedConfigs =
+                    List.map
+                        (\config ->
+                            if config.id == configId then
+                                { config | disabledTokenParams = toggleDisabledParam paramName config.disabledTokenParams }
 
                             else
                                 config
@@ -197,6 +237,7 @@ clientConfigDecoder =
         |> andMap (Decode.field "grantType" Decode.string)
         |> andMap (Decode.field "extraParams" Decode.string)
         |> andMap (Decode.field "disabledParams" Decode.string)
+        |> andMap (Decode.field "disabledTokenParams" Decode.string)
 
 
 authResultDecoder : Decode.Decoder AuthResult
@@ -279,11 +320,11 @@ viewBody callbackUrl model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams) model.configs)
+            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams) model.configs)
 
 
-viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> ClientConfig -> Html Msg
-viewConfigCard callbackUrl authStates expandedResults expandedParams config =
+viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
@@ -340,7 +381,14 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams config =
               else
                 viewDetail "Extra Params" config.extraParams
             ]
-        , viewParamToggles expandedParams config
+        , if config.grantType == "authorization_code" then
+            div []
+                [ viewAuthorizeParamToggles expandedParams config
+                , viewTokenParamToggles expandedTokenParams config
+                ]
+
+          else
+            viewParamToggles expandedParams config
         , if hasResult then
             div [ class "results-section" ]
                 [ span [ class "expandable-toggle", onClick (ToggleResults config.id) ]
@@ -403,15 +451,93 @@ viewParamToggles expandedParams config =
             [ text (chevron ++ " Send Parameters") ]
         , if isExpanded then
             div [ class "param-toggle-list" ]
-                (List.map (viewParamToggle config.id config.disabledParams) allParams)
+                (List.map (viewParamToggle ToggleParam config.id config.disabledParams) allParams)
 
           else
             text ""
         ]
 
 
-viewParamToggle : String -> String -> String -> Html Msg
-viewParamToggle configId disabledParams paramName =
+viewAuthorizeParamToggles : Set String -> ClientConfig -> Html Msg
+viewAuthorizeParamToggles expandedParams config =
+    let
+        isExpanded =
+            Set.member config.id expandedParams
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+
+        authorizeParams =
+            [ "response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method" ]
+
+        extraParamKeys =
+            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
+                Ok dict ->
+                    Dict.keys dict
+
+                Err _ ->
+                    []
+
+        allParams =
+            authorizeParams ++ extraParamKeys
+    in
+    div [ class "param-toggles" ]
+        [ span [ class "expandable-toggle", onClick (ToggleParamsSection config.id) ]
+            [ text (chevron ++ " Authorize Parameters") ]
+        , if isExpanded then
+            div [ class "param-toggle-list" ]
+                (List.map (viewParamToggle ToggleParam config.id config.disabledParams) allParams)
+
+          else
+            text ""
+        ]
+
+
+viewTokenParamToggles : Set String -> ClientConfig -> Html Msg
+viewTokenParamToggles expandedTokenParams config =
+    let
+        isExpanded =
+            Set.member config.id expandedTokenParams
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+
+        tokenParams =
+            [ "client_id", "client_secret", "redirect_uri", "code_verifier" ]
+
+        extraParamKeys =
+            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
+                Ok dict ->
+                    Dict.keys dict
+
+                Err _ ->
+                    []
+
+        allParams =
+            tokenParams ++ extraParamKeys
+    in
+    div [ class "param-toggles" ]
+        [ span [ class "expandable-toggle", onClick (ToggleTokenParamsSection config.id) ]
+            [ text (chevron ++ " Token Parameters") ]
+        , if isExpanded then
+            div [ class "param-toggle-list" ]
+                (List.map (viewParamToggle ToggleTokenParam config.id config.disabledTokenParams) allParams)
+
+          else
+            text ""
+        ]
+
+
+viewParamToggle : (String -> String -> Msg) -> String -> String -> String -> Html Msg
+viewParamToggle toggleMsg configId disabledParams paramName =
     let
         disabled =
             isParamDisabled paramName disabledParams
@@ -420,7 +546,7 @@ viewParamToggle configId disabledParams paramName =
         [ input
             [ type_ "checkbox"
             , checked (not disabled)
-            , onClick (ToggleParam configId paramName)
+            , onClick (toggleMsg configId paramName)
             ]
             []
         , span [ class "param-toggle-name" ] [ text paramName ]

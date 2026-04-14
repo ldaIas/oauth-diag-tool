@@ -99,7 +99,8 @@
             scopes: config.scopes,
             grantType: config.grantType,
             extraParams: config.extraParams,
-            disabledParams: config.disabledParams
+            disabledParams: config.disabledParams,
+            disabledTokenParams: config.disabledTokenParams
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("create_client_config failed:", err); });
@@ -119,7 +120,8 @@
             scopes: config.scopes,
             grantType: config.grantType,
             extraParams: config.extraParams,
-            disabledParams: config.disabledParams
+            disabledParams: config.disabledParams,
+            disabledTokenParams: config.disabledTokenParams
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("update_client_config failed:", err); });

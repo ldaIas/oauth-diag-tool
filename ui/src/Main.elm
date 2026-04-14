@@ -243,6 +243,7 @@ update msg model =
                                     , grantType = config.grantType
                                     , extraParams = config.extraParams
                                     , disabledParams = config.disabledParams
+                                    , disabledTokenParams = config.disabledTokenParams
                                     }
                                 )
                       }
@@ -274,6 +275,7 @@ update msg model =
                             , ( "grantType", Encode.string config.grantType )
                             , ( "extraParams", Encode.string config.extraParams )
                             , ( "disabledParams", Encode.string config.disabledParams )
+                            , ( "disabledTokenParams", Encode.string config.disabledTokenParams )
                             ]
                         )
                     )
@@ -307,6 +309,7 @@ update msg model =
                                     , ( "grantType", Encode.string newForm.grantType )
                                     , ( "extraParams", Encode.string (extraParamsToJson newForm.extraParams) )
                                     , ( "disabledParams", Encode.string newForm.disabledParams )
+                                    , ( "disabledTokenParams", Encode.string newForm.disabledTokenParams )
                                     ]
 
                                 cmd =

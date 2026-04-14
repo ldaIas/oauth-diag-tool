@@ -82,9 +82,10 @@ fn create_client_config(
     grant_type: String,
     extra_params: String,
     disabled_params: String,
+    disabled_token_params: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params)
+    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params)
 }
 
 #[tauri::command]
@@ -101,9 +102,10 @@ fn update_client_config(
     grant_type: String,
     extra_params: String,
     disabled_params: String,
+    disabled_token_params: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params)
+    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params)
 }
 
 #[tauri::command]
@@ -147,7 +149,7 @@ async fn authorize_client(
 ) -> Result<auth_client::AuthResponse, String> {
     log::info!("authorize_client called: id={}", id);
 
-    let (grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled) = {
+    let (grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled, disabled_token) = {
         let conn = state.lock().map_err(|e| e.to_string())?;
         auth_client::lookup_config(&conn, id)?
     };
@@ -159,7 +161,7 @@ async fn authorize_client(
             pending_map.insert(id, cancel_tx);
         }
         let pending_clone = Arc::clone(&pending);
-        let result = auth_client::authorize_code_flow(authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled, cancel_rx).await;
+        let result = auth_client::authorize_code_flow(authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled, disabled_token, cancel_rx).await;
         if let Ok(mut pending_map) = pending_clone.lock() {
             pending_map.remove(&id);
         }

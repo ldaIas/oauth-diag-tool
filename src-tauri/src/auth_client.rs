@@ -28,6 +28,7 @@ pub struct ClientConfig {
     pub grant_type: String,
     pub extra_params: String,
     pub disabled_params: String,
+    pub disabled_token_params: String,
 }
 
 #[derive(Serialize)]
@@ -58,7 +59,7 @@ struct CallbackState {
 pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     log::info!("get_client_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params FROM oauth_client_configs")
+        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params FROM oauth_client_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -77,6 +78,7 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
                 grant_type: row.get(8)?,
                 extra_params: row.get(9)?,
                 disabled_params: row.get(10)?,
+                disabled_token_params: row.get(11)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -98,11 +100,12 @@ pub fn create(
     grant_type: &str,
     extra_params: &str,
     disabled_params: &str,
+    disabled_token_params: &str,
 ) -> Result<(), String> {
     log::info!("create_client_config: name={}", name);
     conn.execute(
-        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params],
+        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params],
     )
     .map_err(|e| {
         log::error!("failed to insert client config: {}", e);
@@ -125,11 +128,12 @@ pub fn update(
     grant_type: &str,
     extra_params: &str,
     disabled_params: &str,
+    disabled_token_params: &str,
 ) -> Result<(), String> {
     log::info!("update_client_config: id={}", id);
     conn.execute(
-        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10 WHERE id = ?11",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, id],
+        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11 WHERE id = ?12",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, id],
     )
     .map_err(|e| {
         log::error!("failed to update client config: {}", e);
@@ -157,11 +161,11 @@ pub fn callback_url() -> String {
     CALLBACK_URL.to_string()
 }
 
-pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, String, String, String, String, HashMap<String, String>, HashSet<String>), String> {
+pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, String, String, String, String, HashMap<String, String>, HashSet<String>, HashSet<String>), String> {
     let mut stmt = conn
-        .prepare("SELECT grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params, disabled_params FROM oauth_client_configs WHERE id = ?1")
+        .prepare("SELECT grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params, disabled_params, disabled_token_params FROM oauth_client_configs WHERE id = ?1")
         .map_err(|e| e.to_string())?;
-    let (grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params_str, disabled_params_str) = stmt.query_row(rusqlite::params![id], |row| {
+    let (grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params_str, disabled_params_str, disabled_token_params_str) = stmt.query_row(rusqlite::params![id], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
@@ -171,6 +175,7 @@ pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, Stri
             row.get::<_, String>(5)?,
             row.get::<_, String>(6)?,
             row.get::<_, String>(7)?,
+            row.get::<_, String>(8)?,
         ))
     })
     .map_err(|e| e.to_string())?;
@@ -186,7 +191,12 @@ pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, Stri
         map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect()
     };
 
-    Ok((grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled))
+    let disabled_token: HashSet<String> = {
+        let map: HashMap<String, bool> = serde_json::from_str(&disabled_token_params_str).unwrap_or_default();
+        map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect()
+    };
+
+    Ok((grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled, disabled_token))
 }
 
 pub async fn authorize_client_credentials(
@@ -251,6 +261,7 @@ pub async fn authorize_code_flow(
     scopes: String,
     extra_map: HashMap<String, String>,
     disabled: HashSet<String>,
+    disabled_token: HashSet<String>,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<AuthResponse, String> {
     let state_param = uuid::Uuid::new_v4().to_string();
@@ -357,21 +368,21 @@ pub async fn authorize_code_flow(
         ("code".to_string(), code),
     ];
 
-    if !disabled.contains("redirect_uri") {
+    if !disabled_token.contains("redirect_uri") {
         params.push(("redirect_uri".to_string(), redirect_uri));
     }
-    if !disabled.contains("client_id") {
+    if !disabled_token.contains("client_id") {
         params.push(("client_id".to_string(), client_id));
     }
-    if !disabled.contains("client_secret") {
+    if !disabled_token.contains("client_secret") {
         params.push(("client_secret".to_string(), client_secret));
     }
-    if !disabled.contains("code_verifier") {
+    if !disabled_token.contains("code_verifier") {
         params.push(("code_verifier".to_string(), code_verifier));
     }
 
     for (k, v) in extra_map {
-        if !disabled.contains(&k) {
+        if !disabled_token.contains(&k) {
             params.push((k, v));
         }
     }

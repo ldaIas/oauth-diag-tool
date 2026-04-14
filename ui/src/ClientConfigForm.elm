@@ -26,6 +26,7 @@ type alias Model =
     , grantType : String
     , extraParams : List ExtraParam
     , disabledParams : String
+    , disabledTokenParams : String
     }
 
 
@@ -42,6 +43,7 @@ init =
     , grantType = "authorization_code"
     , extraParams = []
     , disabledParams = "{}"
+    , disabledTokenParams = "{}"
     }
 
 
@@ -58,10 +60,11 @@ initFromImport data =
     , grantType = "authorization_code"
     , extraParams = []
     , disabledParams = "{}"
+    , disabledTokenParams = "{}"
     }
 
 
-initFromEdit : { id : String, name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String, scopes : String, grantType : String, extraParams : String, disabledParams : String } -> Model
+initFromEdit : { id : String, name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String, scopes : String, grantType : String, extraParams : String, disabledParams : String, disabledTokenParams : String } -> Model
 initFromEdit data =
     { editingId = Just data.id
     , name = data.name
@@ -74,6 +77,7 @@ initFromEdit data =
     , grantType = data.grantType
     , extraParams = parseExtraParams data.extraParams
     , disabledParams = data.disabledParams
+    , disabledTokenParams = data.disabledTokenParams
     }
 
 
