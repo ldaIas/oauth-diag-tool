@@ -2,6 +2,18 @@
 
 A cross-platform desktop application for running local OAuth servers and testing OAuth client configurations. Built with Tauri 2 (Rust) and Elm 0.19.
 
+## Installation
+
+Pre-built binaries are available on the [Releases](../../releases) page. Download the appropriate installer for your platform and install.
+
+### macOS Note
+
+The app is not signed with an Apple Developer certificate. After installing, you need to remove the quarantine attribute before it will run:
+
+```bash
+xattr -cr "/Applications/OAuth Diagnostic Tool.app"
+```
+
 ## Development Setup
 
 ### Prerequisites
