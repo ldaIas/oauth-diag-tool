@@ -4,7 +4,8 @@ import Browser
 import ClientConfigForm
 import ClientConfigList
 import Html exposing (..)
-import Html.Attributes exposing (class)
+import Html.Attributes exposing (class, title)
+import Html.Events exposing (onClick)
 import Json.Decode as Decode
 import Json.Encode as Encode
 import ServerForm
@@ -89,6 +90,8 @@ type alias Model =
     , leftPage : LeftPage
     , rightPage : RightPage
     , callbackUrl : String
+    , leftCollapsed : Bool
+    , rightCollapsed : Bool
     }
 
 
@@ -99,6 +102,8 @@ init _ =
       , leftPage = ServerListPage
       , rightPage = ClientConfigListPage
       , callbackUrl = ""
+      , leftCollapsed = False
+      , rightCollapsed = False
       }
     , Cmd.batch
         [ requestServerConfigs ()
@@ -118,6 +123,8 @@ type Msg
     | ClientConfigListMsg ClientConfigList.Msg
     | ClientConfigFormMsg ClientConfigForm.Msg
     | GotCallbackUrl String
+    | ToggleLeftPanel
+    | ToggleRightPanel
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -288,6 +295,12 @@ update msg model =
         GotCallbackUrl url ->
             ( { model | callbackUrl = url }, Cmd.none )
 
+        ToggleLeftPanel ->
+            ( { model | leftCollapsed = not model.leftCollapsed }, Cmd.none )
+
+        ToggleRightPanel ->
+            ( { model | rightCollapsed = not model.rightCollapsed }, Cmd.none )
+
         ClientConfigFormMsg subMsg ->
             case model.rightPage of
                 ClientConfigCreateFormPage formModel ->
@@ -365,14 +378,50 @@ view model =
     div [ class "shell" ]
         [ viewHeader
         , div [ class "split-layout" ]
-            [ div [ class "panel" ]
-                [ div [ class "panel-title" ] [ text "OAuth Servers" ]
-                , viewLeftPage model
-                ]
-            , div [ class "panel" ]
-                [ div [ class "panel-title" ] [ text "Client Configurations" ]
-                , viewRightPage model
-                ]
+            [ if model.leftCollapsed then
+                div [ class "panel-collapsed panel-collapsed-left", onClick ToggleLeftPanel, title "Expand OAuth Servers" ]
+                    [ span [ class "panel-collapsed-label" ] [ text "OAuth Servers" ]
+                    , span [ class "panel-collapsed-arrow" ] [ text "›" ]
+                    ]
+
+              else
+                div
+                    [ class
+                        (if model.rightCollapsed then
+                            "panel panel-expanded"
+
+                         else
+                            "panel"
+                        )
+                    ]
+                    [ div [ class "panel-title" ]
+                        [ text "OAuth Servers"
+                        , span [ class "panel-collapse-btn", onClick ToggleLeftPanel, title "Collapse" ] [ text "‹" ]
+                        ]
+                    , viewLeftPage model
+                    ]
+            , if model.rightCollapsed then
+                div [ class "panel-collapsed panel-collapsed-right", onClick ToggleRightPanel, title "Expand Client Configurations" ]
+                    [ span [ class "panel-collapsed-arrow" ] [ text "‹" ]
+                    , span [ class "panel-collapsed-label" ] [ text "Client Configurations" ]
+                    ]
+
+              else
+                div
+                    [ class
+                        (if model.leftCollapsed then
+                            "panel panel-expanded"
+
+                         else
+                            "panel"
+                        )
+                    ]
+                    [ div [ class "panel-title" ]
+                        [ text "Client Configurations"
+                        , span [ class "panel-collapse-btn", onClick ToggleRightPanel, title "Collapse" ] [ text "›" ]
+                        ]
+                    , viewRightPage model
+                    ]
             ]
         ]
 

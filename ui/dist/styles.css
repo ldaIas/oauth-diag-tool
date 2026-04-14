@@ -40,6 +40,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   min-height: 0;
 }
 
+.panel.panel-expanded {
+  flex: 1 1 100%;
+}
+
 .panel-title {
   font-size: 11px;
   font-weight: 600;
@@ -49,6 +53,62 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   margin-bottom: 12px;
   padding-bottom: 8px;
   border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-collapse-btn {
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--text-dim);
+  transition: color 0.15s;
+  line-height: 1;
+  user-select: none;
+}
+
+.panel-collapse-btn:hover {
+  color: var(--text);
+}
+
+.panel-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  writing-mode: vertical-lr;
+  padding: 12px 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.panel-collapsed:hover {
+  border-color: var(--border-hi);
+}
+
+.panel-collapsed-left {
+  text-orientation: mixed;
+}
+
+.panel-collapsed-right {
+  text-orientation: mixed;
+}
+
+.panel-collapsed-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.panel-collapsed-arrow {
+  font-size: 14px;
+  color: var(--text-dim);
+  writing-mode: horizontal-tb;
 }
 
 .header {
