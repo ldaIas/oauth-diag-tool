@@ -1,3 +1,7 @@
+-- Copyright 2026 Sam Sovereign
+-- SPDX-License-Identifier: Apache-2.0
+
+
 module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
 
 import Html exposing (..)

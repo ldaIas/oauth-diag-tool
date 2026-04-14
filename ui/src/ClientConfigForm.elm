@@ -1,3 +1,7 @@
+-- Copyright 2026 Sam Sovereign
+-- SPDX-License-Identifier: Apache-2.0
+
+
 module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, update, view)
 
 import Html exposing (..)

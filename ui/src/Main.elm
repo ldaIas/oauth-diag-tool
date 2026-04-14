@@ -1,3 +1,7 @@
+-- Copyright 2026 Sam Sovereign
+-- SPDX-License-Identifier: Apache-2.0
+
+
 port module Main exposing (main)
 
 import Browser

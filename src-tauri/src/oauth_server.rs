@@ -1,3 +1,6 @@
+// Copyright 2026 Sam Sovereign
+// SPDX-License-Identifier: Apache-2.0
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},

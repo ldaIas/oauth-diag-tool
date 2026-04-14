@@ -1,3 +1,7 @@
+-- Copyright 2026 Sam Sovereign
+-- SPDX-License-Identifier: Apache-2.0
+
+
 module ClientConfigList exposing (Action(..), AuthResult, ClientConfig, Model, Msg(..), authResultDecoder, clientConfigDecoder, init, update, view)
 
 import Dict exposing (Dict)
