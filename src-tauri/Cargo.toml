@@ -1,11 +1,11 @@
 [package]
-name = "app"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
+name = "OAuth Diagnostic Tool"
+version = "0.0.2"
+description = "Tool for going through the auth server and client side of OAuth flows"
+authors = ["Sam Sovereign"]
+license = "Apache 2.0"
 repository = ""
-edition = "2021"
+edition = "2026"
 rust-version = "1.77.2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -34,3 +34,4 @@ reqwest = { version = "0.12", features = ["json"] }
 sha2 = "0.10"
 jsonwebtoken = "9"
 chrono = { version = "0.4", features = ["serde"] }
+tauri-plugin-updater = "2.10.1"
