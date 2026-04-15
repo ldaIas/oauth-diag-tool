@@ -25,3 +25,4 @@ Steps to verify the changes work as expected.
 - [ ] Frontend changes are in Elm only
 - [ ] New Tauri commands are registered in `lib.rs` and `permissions/default.toml`
 - [ ] New Elm ports are wired in `ui/dist/index.html`
+- [ ] Changelog updated

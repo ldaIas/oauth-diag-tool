@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- Main tauri.conf.json Config update [PR](https://github.com/ldaIas/oauth-diag-tool/pull/1)\
+- Main - Add authorization server metadata call to oauth clients [PR](https://github.com/ldaIas/oauth-diag-tool/pull/2)
 
 ## [0.0.1] - 2026-04-13
 ### Added
