@@ -34,7 +34,8 @@ const SCHEMA: &str = "
         grant_type TEXT NOT NULL DEFAULT 'authorization_code',
         extra_params TEXT NOT NULL DEFAULT '',
         disabled_params TEXT NOT NULL DEFAULT '{}',
-        disabled_token_params TEXT NOT NULL DEFAULT '{}'
+        disabled_token_params TEXT NOT NULL DEFAULT '{}',
+        scopes_supported TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -46,9 +47,10 @@ const SCHEMA: &str = "
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_params TEXT NOT NULL DEFAULT '{}';"),
     (3, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_token_params TEXT NOT NULL DEFAULT '{}';"),
+    (4, "ALTER TABLE oauth_client_configs ADD COLUMN scopes_supported TEXT NOT NULL DEFAULT '';"),
 ];
 
-const LATEST_VERSION: i64 = 3;
+const LATEST_VERSION: i64 = 4;
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let count: i64 = conn.query_row(

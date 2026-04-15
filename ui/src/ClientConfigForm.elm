@@ -5,7 +5,7 @@
 module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, update, view)
 
 import Html exposing (..)
-import Html.Attributes exposing (class, placeholder, selected, type_, value)
+import Html.Attributes exposing (checked, class, placeholder, selected, type_, value)
 import Html.Events exposing (onClick, onInput)
 
 
@@ -31,6 +31,7 @@ type alias Model =
     , extraParams : List ExtraParam
     , disabledParams : String
     , disabledTokenParams : String
+    , useServerMetadata : Bool
     }
 
 
@@ -48,6 +49,7 @@ init =
     , extraParams = []
     , disabledParams = "{}"
     , disabledTokenParams = "{}"
+    , useServerMetadata = False
     }
 
 
@@ -65,6 +67,7 @@ initFromImport data =
     , extraParams = []
     , disabledParams = "{}"
     , disabledTokenParams = "{}"
+    , useServerMetadata = False
     }
 
 
@@ -82,6 +85,7 @@ initFromEdit data =
     , extraParams = parseExtraParams data.extraParams
     , disabledParams = data.disabledParams
     , disabledTokenParams = data.disabledTokenParams
+    , useServerMetadata = False
     }
 
 
@@ -147,6 +151,7 @@ type Msg
     | RemoveExtraParam Int
     | SetExtraParamKey Int String
     | SetExtraParamValue Int String
+    | ToggleUseServerMetadata
     | Submit
     | Cancel
 
@@ -182,6 +187,9 @@ update msg model =
 
         SetGrantType val ->
             ( { model | grantType = val }, Nothing )
+
+        ToggleUseServerMetadata ->
+            ( { model | useServerMetadata = not model.useServerMetadata }, Nothing )
 
         AddExtraParam ->
             ( { model | extraParams = model.extraParams ++ [ { key = "", value = "" } ] }, Nothing )
@@ -264,8 +272,22 @@ view callbackUrl model =
             [ div [ class "form-title" ] [ text title ]
             , viewInput "Name" model.name SetName "My Client Config"
             , viewInput "Issuer URL" model.issuerUrl SetIssuerUrl "https://auth.example.com"
-            , viewInput "Authorization URL" model.authorizationUrl SetAuthorizationUrl "https://auth.example.com/authorize"
-            , viewInput "Token URL" model.tokenUrl SetTokenUrl "https://auth.example.com/token"
+            , div [ class "form-field form-field-checkbox" ]
+                [ label [ class "param-toggle" ]
+                    [ input [ type_ "checkbox", checked model.useServerMetadata, onClick ToggleUseServerMetadata ] []
+                    , span [ class "param-toggle-name" ] [ text "Use Authorization Server Metadata" ]
+                    ]
+                ]
+            , if model.useServerMetadata then
+                viewDisabledInput "Authorization URL" model.authorizationUrl "Resolved from metadata"
+
+              else
+                viewInput "Authorization URL" model.authorizationUrl SetAuthorizationUrl "https://auth.example.com/authorize"
+            , if model.useServerMetadata then
+                viewDisabledInput "Token URL" model.tokenUrl "Resolved from metadata"
+
+              else
+                viewInput "Token URL" model.tokenUrl SetTokenUrl "https://auth.example.com/token"
             , viewInput "Client ID" model.clientId SetClientId "client-id"
             , viewInput "Client Secret" model.clientSecret SetClientSecret "client-secret"
             , viewInput "Scopes" model.scopes SetScopes "openid profile email"
@@ -289,6 +311,14 @@ viewInput label val toMsg hint =
     div [ class "form-field" ]
         [ span [ class "form-label" ] [ text label ]
         , input [ class "form-input", type_ "text", value val, placeholder hint, onInput toMsg ] []
+        ]
+
+
+viewDisabledInput : String -> String -> String -> Html Msg
+viewDisabledInput label val hint =
+    div [ class "form-field" ]
+        [ span [ class "form-label" ] [ text label ]
+        , input [ class "form-input form-input-readonly", type_ "text", value val, placeholder hint, Html.Attributes.disabled True ] []
         ]
 
 
