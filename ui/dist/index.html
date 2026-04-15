@@ -12,6 +12,23 @@
     <script>
       var app = Elm.Main.init({ node: document.getElementById("app") });
 
+      async function checkForUpdates() {
+        try {
+          var check = await window.__TAURI__.updater.check();
+          if (check && check.available) {
+            var accepted = confirm(
+              "A new version (" + check.version + ") is available. Would you like to update now?"
+            );
+            if (accepted) {
+              await check.downloadAndInstall();
+              await window.__TAURI__.process.relaunch();
+            }
+          }
+        } catch (err) {
+          console.error("Update check failed:", err);
+        }
+      }
+
       function waitForTauri(callback) {
         if (window.__TAURI__) {
           callback();
@@ -24,6 +41,8 @@
           }
         }, 50);
       }
+
+      waitForTauri(checkForUpdates);
 
       function loadServerConfigs() {
         window.__TAURI__.core.invoke("get_server_configs").then(function(configs) {

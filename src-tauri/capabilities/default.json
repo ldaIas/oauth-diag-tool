@@ -7,6 +7,8 @@
   ],
   "permissions": [
     "core:default",
-    "default"
+    "default",
+    "updater:default",
+    "process:default"
   ]
 }
