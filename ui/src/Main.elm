@@ -561,7 +561,7 @@ view model =
         , div [ class "split-layout" ]
             [ if model.leftCollapsed then
                 div [ class "panel-collapsed panel-collapsed-left", onClick ToggleLeftPanel, title "Expand OAuth Servers" ]
-                    [ span [ class "panel-collapsed-label" ] [ text "OAuth Servers" ]
+                    [ span [ class "panel-collapsed-label" ] [ text "OAuth Server Configurations" ]
                     , span [ class "panel-collapsed-arrow" ] [ text "›" ]
                     ]
 
@@ -576,7 +576,7 @@ view model =
                         )
                     ]
                     [ div [ class "panel-title" ]
-                        [ text "OAuth Servers"
+                        [ text "OAuth Server Configurations"
                         , span [ class "panel-collapse-btn", onClick ToggleLeftPanel, title "Collapse" ] [ text "‹" ]
                         ]
                     , viewLeftPage model
@@ -584,7 +584,7 @@ view model =
             , if model.rightCollapsed then
                 div [ class "panel-collapsed panel-collapsed-right", onClick ToggleRightPanel, title "Expand Client Configurations" ]
                     [ span [ class "panel-collapsed-arrow" ] [ text "‹" ]
-                    , span [ class "panel-collapsed-label" ] [ text "Client Configurations" ]
+                    , span [ class "panel-collapsed-label" ] [ text "OAuth Client Configurations" ]
                     ]
 
               else
@@ -598,7 +598,7 @@ view model =
                         )
                     ]
                     [ div [ class "panel-title" ]
-                        [ text "Client Configurations"
+                        [ text "OAuth Client Configurations"
                         , span [ class "panel-collapse-btn", onClick ToggleRightPanel, title "Collapse" ] [ text "›" ]
                         ]
                     , viewRightPage model
@@ -631,7 +631,7 @@ viewHeader : Html Msg
 viewHeader =
     div [ class "header" ]
         [ span [ class "header-title" ] [ text "OAuth Diagnostic" ]
-        , span [ class "header-subtitle" ] [ text "authorization server manager" ]
+        , span [ class "header-subtitle" ] [ text "authorization server and client manager" ]
         ]
 
 
