@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-cancel-authorization`",
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-cancel-authorization`"
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`"
         },
         {
           "description": "Allow adding clients to server configurations",
@@ -229,6 +229,12 @@
           "type": "string",
           "const": "allow-delete-server-config",
           "markdownDescription": "Allow deleting server configurations"
+        },
+        {
+          "description": "Allow fetching OAuth authorization server metadata",
+          "type": "string",
+          "const": "allow-fetch-server-metadata",
+          "markdownDescription": "Allow fetching OAuth authorization server metadata"
         },
         {
           "description": "Allow getting the OAuth callback URL",

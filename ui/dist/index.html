@@ -100,7 +100,8 @@
             grantType: config.grantType,
             extraParams: config.extraParams,
             disabledParams: config.disabledParams,
-            disabledTokenParams: config.disabledTokenParams
+            disabledTokenParams: config.disabledTokenParams,
+            scopesSupported: config.scopesSupported || ""
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("create_client_config failed:", err); });
@@ -121,10 +122,31 @@
             grantType: config.grantType,
             extraParams: config.extraParams,
             disabledParams: config.disabledParams,
-            disabledTokenParams: config.disabledTokenParams
+            disabledTokenParams: config.disabledTokenParams,
+            scopesSupported: config.scopesSupported || ""
           }).then(function() {
             loadClientConfigs();
           }).catch(function(err) { console.error("update_client_config failed:", err); });
+        });
+      });
+
+      app.ports.fetchServerMetadata.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("fetch_server_metadata", {
+            issuerUrl: data.issuerUrl
+          }).then(function(result) {
+            result.configId = data.configId || "";
+            app.ports.receiveServerMetadata.send(result);
+          }).catch(function(err) {
+            console.error("fetch_server_metadata failed:", err);
+            app.ports.receiveServerMetadata.send({
+              configId: data.configId || "",
+              body: "Error: " + err,
+              authorizationEndpoint: "",
+              tokenEndpoint: "",
+              scopesSupported: ""
+            });
+          });
         });
       });
 

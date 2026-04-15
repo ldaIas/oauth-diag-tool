@@ -32,6 +32,16 @@ pub struct ClientConfig {
     pub extra_params: String,
     pub disabled_params: String,
     pub disabled_token_params: String,
+    pub scopes_supported: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerMetadataResponse {
+    pub body: String,
+    pub authorization_endpoint: String,
+    pub token_endpoint: String,
+    pub scopes_supported: String,
 }
 
 #[derive(Serialize)]
@@ -62,7 +72,7 @@ struct CallbackState {
 pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     log::info!("get_client_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params FROM oauth_client_configs")
+        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported FROM oauth_client_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -82,6 +92,7 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
                 extra_params: row.get(9)?,
                 disabled_params: row.get(10)?,
                 disabled_token_params: row.get(11)?,
+                scopes_supported: row.get(12)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -104,11 +115,12 @@ pub fn create(
     extra_params: &str,
     disabled_params: &str,
     disabled_token_params: &str,
+    scopes_supported: &str,
 ) -> Result<(), String> {
     log::info!("create_client_config: name={}", name);
     conn.execute(
-        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params],
+        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported],
     )
     .map_err(|e| {
         log::error!("failed to insert client config: {}", e);
@@ -132,11 +144,12 @@ pub fn update(
     extra_params: &str,
     disabled_params: &str,
     disabled_token_params: &str,
+    scopes_supported: &str,
 ) -> Result<(), String> {
     log::info!("update_client_config: id={}", id);
     conn.execute(
-        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11 WHERE id = ?12",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, id],
+        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12 WHERE id = ?13",
+        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, id],
     )
     .map_err(|e| {
         log::error!("failed to update client config: {}", e);
@@ -474,6 +487,58 @@ async fn build_auth_response(response: reqwest::Response) -> Result<AuthResponse
         status_code,
         headers,
         body,
+    })
+}
+
+pub async fn fetch_server_metadata(issuer_url: &str) -> Result<ServerMetadataResponse, String> {
+    let base = issuer_url.trim_end_matches('/');
+    let url = format!("{}/.well-known/oauth-authorization-server", base);
+    log::info!("fetch_server_metadata: {}", url);
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to fetch metadata: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Metadata request returned status {}", response.status()));
+    }
+
+    let body = response.text().await.map_err(|e| format!("Failed to read response body: {}", e))?;
+
+    let json: serde_json::Value = serde_json::from_str(&body)
+        .map_err(|e| format!("Failed to parse metadata JSON: {}", e))?;
+
+    let authorization_endpoint = json.get("authorization_endpoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let token_endpoint = json.get("token_endpoint")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let scopes_supported = json.get("scopes_supported")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .unwrap_or_default();
+
+    // Pretty-print the body for display
+    let pretty_body = serde_json::to_string_pretty(&json).unwrap_or(body);
+
+    Ok(ServerMetadataResponse {
+        body: pretty_body,
+        authorization_endpoint,
+        token_endpoint,
+        scopes_supported,
     })
 }
 

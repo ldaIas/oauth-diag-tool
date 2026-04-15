@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ClientConfigList exposing (Action(..), AuthResult, ClientConfig, Model, Msg(..), authResultDecoder, clientConfigDecoder, init, update, view)
+module ClientConfigList exposing (Action(..), AuthResult, ClientConfig, MetadataResult, Model, Msg(..), authResultDecoder, clientConfigDecoder, metadataResultDecoder, init, update, view)
 
 import Dict exposing (Dict)
 import Html exposing (..)
@@ -29,6 +29,16 @@ type alias ClientConfig =
     , extraParams : String
     , disabledParams : String
     , disabledTokenParams : String
+    , scopesSupported : String
+    }
+
+
+type alias MetadataResult =
+    { configId : String
+    , body : String
+    , authorizationEndpoint : String
+    , tokenEndpoint : String
+    , scopesSupported : String
     }
 
 
@@ -47,12 +57,21 @@ type AuthState
     | Error String
 
 
+type MetadataState
+    = MetadataIdle
+    | MetadataLoading
+    | MetadataDone String
+    | MetadataError String
+
+
 type alias Model =
     { configs : List ClientConfig
     , authStates : Dict String AuthState
     , expandedResults : Set String
     , expandedParams : Set String
     , expandedTokenParams : Set String
+    , expandedMetadata : Set String
+    , metadataStates : Dict String MetadataState
     }
 
 
@@ -63,6 +82,8 @@ init =
     , expandedResults = Set.empty
     , expandedParams = Set.empty
     , expandedTokenParams = Set.empty
+    , expandedMetadata = Set.empty
+    , metadataStates = Dict.empty
     }
 
 
@@ -81,6 +102,9 @@ type Msg
     | ToggleTokenParam String String
     | ToggleParamsSection String
     | ToggleTokenParamsSection String
+    | ToggleMetadataSection String
+    | FetchMetadata String String
+    | GotMetadataResult (Result Decode.Error MetadataResult)
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
 
@@ -92,6 +116,7 @@ type Action
     | RequestAuthorizeConfig String
     | RequestCancelAuthorize String
     | RequestUpdateConfig ClientConfig
+    | RequestFetchMetadata String String
     | NoAction
 
 
@@ -201,6 +226,72 @@ update msg model =
                 Nothing ->
                     ( model, NoAction )
 
+        ToggleMetadataSection id ->
+            let
+                newExpanded =
+                    if Set.member id model.expandedMetadata then
+                        Set.remove id model.expandedMetadata
+
+                    else
+                        Set.insert id model.expandedMetadata
+            in
+            ( { model | expandedMetadata = newExpanded }, NoAction )
+
+        FetchMetadata configId issuerUrl ->
+            ( { model
+                | metadataStates = Dict.insert configId MetadataLoading model.metadataStates
+                , expandedMetadata = Set.insert configId model.expandedMetadata
+              }
+            , RequestFetchMetadata configId issuerUrl
+            )
+
+        GotMetadataResult result ->
+            case result of
+                Ok metadata ->
+                    if String.isEmpty metadata.authorizationEndpoint && String.isEmpty metadata.tokenEndpoint then
+                        -- Error response: endpoints are empty, body contains the error
+                        ( { model | metadataStates = Dict.insert metadata.configId (MetadataError metadata.body) model.metadataStates }
+                        , NoAction
+                        )
+
+                    else
+                        let
+                            updatedConfigs =
+                                List.map
+                                    (\config ->
+                                        if config.id == metadata.configId then
+                                            { config
+                                                | authorizationUrl = metadata.authorizationEndpoint
+                                                , tokenUrl = metadata.tokenEndpoint
+                                                , scopesSupported = metadata.scopesSupported
+                                            }
+
+                                        else
+                                            config
+                                    )
+                                    model.configs
+
+                            updatedConfig =
+                                List.filter (\c -> c.id == metadata.configId) updatedConfigs
+                                    |> List.head
+                        in
+                        case updatedConfig of
+                            Just config ->
+                                ( { model
+                                    | configs = updatedConfigs
+                                    , metadataStates = Dict.insert metadata.configId (MetadataDone metadata.body) model.metadataStates
+                                  }
+                                , RequestUpdateConfig config
+                                )
+
+                            Nothing ->
+                                ( { model | metadataStates = Dict.insert metadata.configId (MetadataDone metadata.body) model.metadataStates }
+                                , NoAction
+                                )
+
+                Err _ ->
+                    ( model, NoAction )
+
         GotAuthResult result ->
             case result of
                 Ok authResult ->
@@ -242,6 +333,17 @@ clientConfigDecoder =
         |> andMap (Decode.field "extraParams" Decode.string)
         |> andMap (Decode.field "disabledParams" Decode.string)
         |> andMap (Decode.field "disabledTokenParams" Decode.string)
+        |> andMap (Decode.field "scopesSupported" Decode.string)
+
+
+metadataResultDecoder : Decode.Decoder MetadataResult
+metadataResultDecoder =
+    Decode.map5 MetadataResult
+        (Decode.field "configId" Decode.string)
+        (Decode.field "body" Decode.string)
+        (Decode.field "authorizationEndpoint" Decode.string)
+        (Decode.field "tokenEndpoint" Decode.string)
+        (Decode.field "scopesSupported" Decode.string)
 
 
 authResultDecoder : Decode.Decoder AuthResult
@@ -324,11 +426,11 @@ viewBody callbackUrl model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams) model.configs)
+            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams model.expandedMetadata model.metadataStates) model.configs)
 
 
-viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> ClientConfig -> Html Msg
-viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams config =
+viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams expandedMetadata metadataStates config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
@@ -384,6 +486,11 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
 
               else
                 viewDetail "Extra Params" config.extraParams
+            , if String.isEmpty config.scopesSupported then
+                text ""
+
+              else
+                viewDetail "Scopes Supported" config.scopesSupported
             ]
         , if config.grantType == "authorization_code" then
             div []
@@ -393,6 +500,7 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
 
           else
             viewParamToggles expandedParams config
+        , viewMetadataSection expandedMetadata metadataStates config
         , if hasResult then
             div [ class "results-section" ]
                 [ span [ class "expandable-toggle", onClick (ToggleResults config.id) ]
@@ -407,6 +515,61 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
           else
             text ""
         ]
+
+
+viewMetadataSection : Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
+viewMetadataSection expandedMetadata metadataStates config =
+    let
+        isExpanded =
+            Set.member config.id expandedMetadata
+
+        metaState =
+            Dict.get config.id metadataStates |> Maybe.withDefault MetadataIdle
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+    in
+    div [ class "param-toggles" ]
+        [ span [ class "expandable-toggle", onClick (ToggleMetadataSection config.id) ]
+            [ text (chevron ++ " Authorization Server Metadata") ]
+        , if isExpanded then
+            div [ class "metadata-section-content" ]
+                [ button [ class "btn-server-control btn-authorize", onClick (FetchMetadata config.id config.issuerUrl) ]
+                    [ text "Refresh Metadata" ]
+                , viewMetadataState metaState
+                ]
+
+          else
+            text ""
+        ]
+
+
+viewMetadataState : MetadataState -> Html Msg
+viewMetadataState state =
+    case state of
+        MetadataIdle ->
+            div [ class "metadata-hint" ]
+                [ span [ class "auth-loading" ] [ text "Click Refresh Metadata to fetch" ] ]
+
+        MetadataLoading ->
+            div [ class "metadata-hint" ]
+                [ span [ class "auth-loading" ] [ text "Fetching metadata..." ] ]
+
+        MetadataDone body ->
+            div [ class "auth-response-body" ]
+                [ span [ class "detail-label" ] [ text "Response" ]
+                , pre [ class "auth-body-content" ] [ text body ]
+                ]
+
+        MetadataError err ->
+            div [ class "auth-response-error" ]
+                [ span [ class "detail-label" ] [ text "Error" ]
+                , span [ class "auth-error-text" ] [ text err ]
+                ]
 
 
 viewParamToggles : Set String -> ClientConfig -> Html Msg

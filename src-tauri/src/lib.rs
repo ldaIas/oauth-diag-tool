@@ -86,9 +86,10 @@ fn create_client_config(
     extra_params: String,
     disabled_params: String,
     disabled_token_params: String,
+    scopes_supported: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params)
+    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported)
 }
 
 #[tauri::command]
@@ -106,9 +107,10 @@ fn update_client_config(
     extra_params: String,
     disabled_params: String,
     disabled_token_params: String,
+    scopes_supported: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params)
+    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported)
 }
 
 #[tauri::command]
@@ -182,6 +184,13 @@ fn cancel_authorization(
     auth_client::cancel(&pending, id)
 }
 
+#[tauri::command]
+async fn fetch_server_metadata(
+    issuer_url: String,
+) -> Result<auth_client::ServerMetadataResponse, String> {
+    auth_client::fetch_server_metadata(&issuer_url).await
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
@@ -200,6 +209,7 @@ pub fn run() {
         get_callback_url,
         authorize_client,
         cancel_authorization,
+        fetch_server_metadata,
     ])
     .setup(|app| {
       if cfg!(debug_assertions) {
