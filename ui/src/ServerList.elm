@@ -5,8 +5,8 @@
 module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
 
 import Html exposing (..)
-import Html.Attributes exposing (class, disabled)
-import Html.Events exposing (onClick)
+import Html.Attributes exposing (class, disabled, placeholder, type_, value)
+import Html.Events exposing (onClick, onInput)
 import Json.Decode as Decode
 import Set exposing (Set)
 
@@ -30,12 +30,25 @@ type alias OAuthServer =
     , port_ : Int
     , running : Bool
     , clients : List Client
+    , redirectUrlOverride : String
+    , accessTokenExpiry : Int
+    , refreshTokenExpiry : Int
+    }
+
+
+type alias SettingsEdit =
+    { redirectUrlOverride : String
+    , accessTokenExpiry : String
+    , refreshTokenExpiry : String
     }
 
 
 type alias Model =
     { servers : List OAuthServer
     , expandedClients : Set String
+    , expandedSettings : Set String
+    , settingsEdits : List ( String, SettingsEdit )
+    , savedSettings : Set String
     }
 
 
@@ -43,6 +56,9 @@ init : Model
 init =
     { servers = []
     , expandedClients = Set.empty
+    , expandedSettings = Set.empty
+    , settingsEdits = []
+    , savedSettings = Set.empty
     }
 
 
@@ -59,6 +75,13 @@ type Msg
     | StartServer String
     | StopServer String
     | ToggleClients String
+    | ToggleSettings String
+    | EditRedirectOverride String String
+    | EditAccessTokenExpiry String String
+    | EditRefreshTokenExpiry String String
+    | SaveSettings String
+    | SettingsSaved String
+    | ClearSettingsSaved String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
 
 
@@ -70,6 +93,7 @@ type Action
     | RequestImportClient { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String }
     | RequestStartServer String
     | RequestStopServer String
+    | RequestSaveSettings { id : String, redirectUrlOverride : String, accessTokenExpiry : Int, refreshTokenExpiry : Int }
     | NoAction
 
 
@@ -119,6 +143,66 @@ update msg model =
             in
             ( { model | expandedClients = newExpanded }, NoAction )
 
+        ToggleSettings serverId ->
+            let
+                newExpanded =
+                    if Set.member serverId model.expandedSettings then
+                        Set.remove serverId model.expandedSettings
+
+                    else
+                        Set.insert serverId model.expandedSettings
+
+                -- Initialize edit state from server data if expanding
+                newEdits =
+                    if not (Set.member serverId model.expandedSettings) then
+                        case List.filter (\s -> s.id == serverId) model.servers of
+                            server :: _ ->
+                                ( serverId
+                                , { redirectUrlOverride = server.redirectUrlOverride
+                                  , accessTokenExpiry = String.fromInt server.accessTokenExpiry
+                                  , refreshTokenExpiry = String.fromInt server.refreshTokenExpiry
+                                  }
+                                )
+                                    :: List.filter (\( id, _ ) -> id /= serverId) model.settingsEdits
+
+                            [] ->
+                                model.settingsEdits
+
+                    else
+                        List.filter (\( id, _ ) -> id /= serverId) model.settingsEdits
+            in
+            ( { model | expandedSettings = newExpanded, settingsEdits = newEdits }, NoAction )
+
+        EditRedirectOverride serverId val ->
+            ( { model | settingsEdits = updateSettingsEdit serverId (\e -> { e | redirectUrlOverride = val }) model.settingsEdits }, NoAction )
+
+        EditAccessTokenExpiry serverId val ->
+            ( { model | settingsEdits = updateSettingsEdit serverId (\e -> { e | accessTokenExpiry = val }) model.settingsEdits }, NoAction )
+
+        EditRefreshTokenExpiry serverId val ->
+            ( { model | settingsEdits = updateSettingsEdit serverId (\e -> { e | refreshTokenExpiry = val }) model.settingsEdits }, NoAction )
+
+        SettingsSaved serverId ->
+            ( { model | savedSettings = Set.insert serverId model.savedSettings }, NoAction )
+
+        ClearSettingsSaved serverId ->
+            ( { model | savedSettings = Set.remove serverId model.savedSettings }, NoAction )
+
+        SaveSettings serverId ->
+            case getSettingsEdit serverId model.settingsEdits of
+                Just edit ->
+                    ( model
+                    , RequestSaveSettings
+                        { id = serverId
+                        , redirectUrlOverride = edit.redirectUrlOverride
+                        , accessTokenExpiry = String.toInt edit.accessTokenExpiry |> Maybe.withDefault 3600
+                        , refreshTokenExpiry = String.toInt edit.refreshTokenExpiry |> Maybe.withDefault 86400
+                        }
+                    )
+
+                Nothing ->
+                    ( model, NoAction )
+
         GotServerConfigs result ->
             case result of
                 Ok configs ->
@@ -126,6 +210,33 @@ update msg model =
 
                 Err _ ->
                     ( model, NoAction )
+
+
+updateSettingsEdit : String -> (SettingsEdit -> SettingsEdit) -> List ( String, SettingsEdit ) -> List ( String, SettingsEdit )
+updateSettingsEdit serverId fn edits =
+    List.map
+        (\( id, edit ) ->
+            if id == serverId then
+                ( id, fn edit )
+
+            else
+                ( id, edit )
+        )
+        edits
+
+
+getSettingsEdit : String -> List ( String, SettingsEdit ) -> Maybe SettingsEdit
+getSettingsEdit serverId edits =
+    List.filterMap
+        (\( id, edit ) ->
+            if id == serverId then
+                Just edit
+
+            else
+                Nothing
+        )
+        edits
+        |> List.head
 
 
 
@@ -167,28 +278,37 @@ clientDecoder =
 
 serverConfigDecoder : Decode.Decoder OAuthServer
 serverConfigDecoder =
-    Decode.map6
-        (\id name authUrl tokUrl running clients ->
-            let
-                port_ =
-                    extractPort authUrl
-            in
-            { id = String.fromInt id
-            , name = name
-            , issuerUrl = "http://localhost:" ++ String.fromInt port_
-            , authorizationUrl = authUrl
-            , tokenEndpoint = tokUrl
-            , port_ = port_
-            , running = running
-            , clients = clients
-            }
-        )
-        (Decode.field "id" Decode.int)
-        (Decode.field "configName" Decode.string)
-        (Decode.field "authServerUrl" Decode.string)
-        (Decode.field "tokenUrl" Decode.string)
-        (Decode.field "running" Decode.bool)
-        (Decode.field "clients" (Decode.list clientDecoder))
+    Decode.field "id" Decode.int
+        |> Decode.andThen
+            (\id ->
+                Decode.map8
+                    (\name authUrl tokUrl running clients redirectOverride accessExpiry refreshExpiry ->
+                        let
+                            port_ =
+                                extractPort authUrl
+                        in
+                        { id = String.fromInt id
+                        , name = name
+                        , issuerUrl = "http://localhost:" ++ String.fromInt port_
+                        , authorizationUrl = authUrl
+                        , tokenEndpoint = tokUrl
+                        , port_ = port_
+                        , running = running
+                        , clients = clients
+                        , redirectUrlOverride = redirectOverride
+                        , accessTokenExpiry = accessExpiry
+                        , refreshTokenExpiry = refreshExpiry
+                        }
+                    )
+                    (Decode.field "configName" Decode.string)
+                    (Decode.field "authServerUrl" Decode.string)
+                    (Decode.field "tokenUrl" Decode.string)
+                    (Decode.field "running" Decode.bool)
+                    (Decode.field "clients" (Decode.list clientDecoder))
+                    (Decode.field "redirectUrlOverride" Decode.string)
+                    (Decode.field "accessTokenExpiry" Decode.int)
+                    (Decode.field "refreshTokenExpiry" Decode.int)
+            )
 
 
 extractPort : String -> Int
@@ -221,20 +341,30 @@ viewBody model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewServerCard model.expandedClients) model.servers)
+            (List.map (viewServerCard model) model.servers)
 
 
-viewServerCard : Set String -> OAuthServer -> Html Msg
-viewServerCard expandedClients server =
+viewServerCard : Model -> OAuthServer -> Html Msg
+viewServerCard model server =
     let
-        isExpanded =
-            Set.member server.id expandedClients
+        isClientsExpanded =
+            Set.member server.id model.expandedClients
+
+        isSettingsExpanded =
+            Set.member server.id model.expandedSettings
 
         clientCount =
             List.length server.clients
 
-        chevron =
-            if isExpanded then
+        clientChevron =
+            if isClientsExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+
+        settingsChevron =
+            if isSettingsExpanded then
                 "\u{25BC}"
 
             else
@@ -263,13 +393,24 @@ viewServerCard expandedClients server =
             , viewDetail "Authorization" server.authorizationUrl
             , viewDetail "Token" server.tokenEndpoint
             ]
+        , div [ class "settings-section" ]
+            [ div [ class "settings-section-header" ]
+                [ span [ class "expandable-toggle", onClick (ToggleSettings server.id) ]
+                    [ text (settingsChevron ++ " Settings") ]
+                ]
+            , if isSettingsExpanded then
+                viewSettingsForm server.id model.savedSettings model.settingsEdits
+
+              else
+                text ""
+            ]
         , div [ class "client-section" ]
             [ div [ class "client-section-header" ]
                 [ span [ class "expandable-toggle", onClick (ToggleClients server.id) ]
-                    [ text (chevron ++ " Clients (" ++ String.fromInt clientCount ++ ")") ]
+                    [ text (clientChevron ++ " Clients (" ++ String.fromInt clientCount ++ ")") ]
                 , button [ class "btn-add-client", onClick (AddClient server.id) ] [ text "+ Add Client" ]
                 ]
-            , if isExpanded then
+            , if isClientsExpanded then
                 if List.isEmpty server.clients then
                     div [ class "client-empty" ] [ text "No clients" ]
 
@@ -281,6 +422,68 @@ viewServerCard expandedClients server =
                 text ""
             ]
         ]
+
+
+viewSettingsForm : String -> Set String -> List ( String, SettingsEdit ) -> Html Msg
+viewSettingsForm serverId saved edits =
+    case getSettingsEdit serverId edits of
+        Just edit ->
+            let
+                isSaved =
+                    Set.member serverId saved
+            in
+            div [ class "settings-form" ]
+                [ div [ class "settings-hint" ] [ text "Server must be restarted for changes to take effect." ]
+                , div [ class "settings-field" ]
+                    [ span [ class "detail-label" ] [ text "Redirect URL Override" ]
+                    , input
+                        [ class "form-input settings-input"
+                        , type_ "text"
+                        , placeholder "Leave empty to use client-provided URL"
+                        , value edit.redirectUrlOverride
+                        , onInput (EditRedirectOverride serverId)
+                        ]
+                        []
+                    ]
+                , div [ class "settings-field" ]
+                    [ span [ class "detail-label" ] [ text "Access Token Expiry (seconds)" ]
+                    , input
+                        [ class "form-input settings-input"
+                        , type_ "number"
+                        , placeholder "3600"
+                        , value edit.accessTokenExpiry
+                        , onInput (EditAccessTokenExpiry serverId)
+                        ]
+                        []
+                    ]
+                , div [ class "settings-field" ]
+                    [ span [ class "detail-label" ] [ text "Refresh Token Expiry (seconds)" ]
+                    , input
+                        [ class "form-input settings-input"
+                        , type_ "number"
+                        , placeholder "86400"
+                        , value edit.refreshTokenExpiry
+                        , onInput (EditRefreshTokenExpiry serverId)
+                        ]
+                        []
+                    ]
+                , div [ class "settings-actions" ]
+                    [ if isSaved then
+                        span [ class "settings-saved-label" ] [ text "\u{2713} Saved" ]
+
+                      else
+                        text ""
+                    , button
+                        [ class "btn-save-settings"
+                        , disabled isSaved
+                        , onClick (SaveSettings serverId)
+                        ]
+                        [ text "Save" ]
+                    ]
+                ]
+
+        Nothing ->
+            text ""
 
 
 viewServerControls : OAuthServer -> Html Msg
@@ -312,10 +515,10 @@ viewClientCard server client =
 
 
 viewDetail : String -> String -> Html Msg
-viewDetail label value =
+viewDetail label val =
     div [ class "server-detail" ]
         [ span [ class "detail-label" ] [ text label ]
-        , span [ class "detail-value" ] [ text value ]
+        , span [ class "detail-value" ] [ text val ]
         ]
 
 

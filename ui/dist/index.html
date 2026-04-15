@@ -160,6 +160,19 @@
         });
       });
 
+      app.ports.updateServerSettings.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("update_server_settings", {
+            id: parseInt(data.id, 10),
+            redirectUrlOverride: data.redirectUrlOverride,
+            accessTokenExpiry: data.accessTokenExpiry,
+            refreshTokenExpiry: data.refreshTokenExpiry
+          }).then(function() {
+            loadServerConfigs();
+          }).catch(function(err) { console.error("update_server_settings failed:", err); });
+        });
+      });
+
       app.ports.startServer.subscribe(function(data) {
         waitForTauri(function() {
           window.__TAURI__.core.invoke("start_server", {

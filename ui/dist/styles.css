@@ -426,6 +426,79 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .btn-submit:hover { background: var(--accent); color: var(--bg); }
 
+.settings-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 8px 0 4px 16px;
+}
+
+.settings-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  font-style: italic;
+}
+
+.settings-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.settings-input {
+  padding: 7px 10px;
+  font-size: 11px;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.btn-save-settings {
+  padding: 5px 14px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--font);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-save-settings:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+.btn-save-settings:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-saved-label {
+  font-size: 10px;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+}
+
 .client-section {
   padding-top: 8px;
   border-top: 1px solid var(--border);
