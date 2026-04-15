@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-cancel-authorization", "allow-fetch-server-metadata"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-cancel-authorization", "allow-fetch-server-metadata"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -46,6 +46,11 @@ commands.allow = ["update_client_config"]
 identifier = "allow-delete-client-config"
 description = "Allow deleting client configurations"
 commands.allow = ["delete_client_config"]
+
+[[permission]]
+identifier = "allow-update-server-settings"
+description = "Allow updating server settings (redirect override, token expiry)"
+commands.allow = ["update_server_settings"]
 
 [[permission]]
 identifier = "allow-start-server"

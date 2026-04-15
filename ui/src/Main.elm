@@ -12,7 +12,9 @@ import Html.Attributes exposing (class, title)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
 import Json.Encode as Encode
+import Process
 import ServerForm
+import Task
 import ServerList
 
 
@@ -59,6 +61,9 @@ port startServer : Encode.Value -> Cmd msg
 port stopServer : Encode.Value -> Cmd msg
 
 
+port updateServerSettings : Encode.Value -> Cmd msg
+
+
 port authorizeClient : Encode.Value -> Cmd msg
 
 
@@ -103,6 +108,7 @@ type alias Model =
     , leftCollapsed : Bool
     , rightCollapsed : Bool
     , pendingFormSubmit : Maybe ClientConfigForm.Model
+    , pendingSaveSettings : Maybe String
     }
 
 
@@ -116,6 +122,7 @@ init _ =
       , leftCollapsed = False
       , rightCollapsed = False
       , pendingFormSubmit = Nothing
+      , pendingSaveSettings = Nothing
       }
     , Cmd.batch
         [ requestServerConfigs ()
@@ -190,10 +197,37 @@ update msg model =
                     , stopServer (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
-                ServerList.NoAction ->
-                    ( { model | serverList = newServerList }
-                    , Cmd.none
+                ServerList.RequestSaveSettings settings ->
+                    ( { model | serverList = newServerList, pendingSaveSettings = Just settings.id }
+                    , updateServerSettings
+                        (Encode.object
+                            [ ( "id", Encode.string settings.id )
+                            , ( "redirectUrlOverride", Encode.string settings.redirectUrlOverride )
+                            , ( "accessTokenExpiry", Encode.int settings.accessTokenExpiry )
+                            , ( "refreshTokenExpiry", Encode.int settings.refreshTokenExpiry )
+                            ]
+                        )
                     )
+
+                ServerList.NoAction ->
+                    case model.pendingSaveSettings of
+                        Just savedId ->
+                            let
+                                ( confirmedList, _ ) =
+                                    ServerList.update (ServerList.SettingsSaved savedId) newServerList
+                            in
+                            ( { model
+                                | serverList = confirmedList
+                                , pendingSaveSettings = Nothing
+                              }
+                            , Process.sleep 2000
+                                |> Task.perform (\_ -> ServerListMsg (ServerList.ClearSettingsSaved savedId))
+                            )
+
+                        Nothing ->
+                            ( { model | serverList = newServerList }
+                            , Cmd.none
+                            )
 
         ServerFormMsg subMsg ->
             case model.leftPage of

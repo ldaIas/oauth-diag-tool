@@ -32,3 +32,5 @@ base64 = "0.22"
 form_urlencoded = "1.2"
 reqwest = { version = "0.12", features = ["json"] }
 sha2 = "0.10"
+jsonwebtoken = "9"
+chrono = { version = "0.4", features = ["serde"] }

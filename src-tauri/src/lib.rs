@@ -123,6 +123,18 @@ fn delete_client_config(
 }
 
 #[tauri::command]
+fn update_server_settings(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+    redirect_url_override: String,
+    access_token_expiry: i64,
+    refresh_token_expiry: i64,
+) -> Result<(), String> {
+    let conn = state.lock().map_err(|e| e.to_string())?;
+    auth_server::update_settings(&conn, id, &redirect_url_override, access_token_expiry, refresh_token_expiry)
+}
+
+#[tauri::command]
 fn start_server(
     db_state: tauri::State<'_, Arc<Mutex<Connection>>>,
     running_state: tauri::State<'_, Mutex<RunningServers>>,
@@ -204,6 +216,7 @@ pub fn run() {
         create_client_config,
         update_client_config,
         delete_client_config,
+        update_server_settings,
         start_server,
         stop_server,
         get_callback_url,

@@ -9,6 +9,8 @@ use axum::{
     Router,
 };
 use base64::Engine;
+use chrono::Utc;
+use jsonwebtoken::{encode, EncodingKey, Header};
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
@@ -21,16 +23,45 @@ pub struct ServerState {
     pub server_id: i64,
     pub issuer_url: String,
     pub token_url: String,
-    /// Maps auth codes to (client_id, redirect_uri) for the authorization_code grant
+    /// Maps auth codes to their metadata for the authorization_code grant
     pub auth_codes: Arc<Mutex<HashMap<String, AuthCodeEntry>>>,
+    /// Maps refresh tokens to their metadata
+    pub refresh_tokens: Arc<Mutex<HashMap<String, RefreshTokenEntry>>>,
+    /// Optional redirect URL override — when set, the authorize endpoint uses this instead of the client-provided redirect_uri
+    pub redirect_url_override: Option<String>,
+    /// Access token expiry in seconds (default 3600)
+    pub access_token_expiry: u64,
+    /// Refresh token expiry in seconds (default 86400)
+    pub refresh_token_expiry: u64,
+    /// HMAC-SHA256 signing key for JWT access tokens
+    pub signing_key: Vec<u8>,
 }
 
 #[derive(Clone)]
 pub struct AuthCodeEntry {
     pub client_id: String,
     pub redirect_uri: String,
+    pub scope: String,
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct RefreshTokenEntry {
+    pub client_id: String,
+    pub scope: String,
+    pub expires_at: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct JwtClaims {
+    iss: String,
+    sub: String,
+    aud: String,
+    exp: i64,
+    iat: i64,
+    scope: String,
+    jti: String,
 }
 
 #[derive(Serialize)]
@@ -38,6 +69,8 @@ struct TokenResponse {
     access_token: String,
     token_type: String,
     expires_in: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refresh_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -87,6 +120,7 @@ async fn openid_configuration(
         grant_types_supported: vec![
             "client_credentials".to_string(),
             "authorization_code".to_string(),
+            "refresh_token".to_string(),
         ],
         response_types_supported: vec!["code".to_string()],
         token_endpoint_auth_methods_supported: vec![
@@ -143,6 +177,12 @@ async fn authorize_endpoint(
         ));
     }
 
+    // Apply redirect URL override if configured
+    let effective_redirect_uri = match &state.redirect_url_override {
+        Some(override_url) => override_url.as_str(),
+        None => redirect_uri,
+    };
+
     // Render a simple consent page
     let html = format!(
         r#"<!DOCTYPE html>
@@ -168,10 +208,10 @@ button:hover {{ background: #c73652; }}
 <h1>Authorization Request</h1>
 <div class="detail"><span class="label">Client ID</span><span class="value">{client_id}</span></div>
 <div class="detail"><span class="label">Scope</span><span class="value">{scope}</span></div>
-<div class="detail"><span class="label">Redirect URI</span><span class="value">{redirect_uri}</span></div>
+<div class="detail"><span class="label">Redirect URI</span><span class="value">{effective_redirect_uri}</span></div>
 <form method="POST" action="/authorize">
 <input type="hidden" name="client_id" value="{client_id}">
-<input type="hidden" name="redirect_uri" value="{redirect_uri}">
+<input type="hidden" name="redirect_uri" value="{effective_redirect_uri}">
 <input type="hidden" name="state" value="{request_state}">
 <input type="hidden" name="scope" value="{scope}">
 <input type="hidden" name="code_challenge" value="{code_challenge}">
@@ -181,7 +221,7 @@ button:hover {{ background: #c73652; }}
 </form>
 <form method="POST" action="/authorize">
 <input type="hidden" name="client_id" value="{client_id}">
-<input type="hidden" name="redirect_uri" value="{redirect_uri}">
+<input type="hidden" name="redirect_uri" value="{effective_redirect_uri}">
 <input type="hidden" name="state" value="{request_state}">
 <input type="hidden" name="code_challenge" value="{code_challenge}">
 <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
@@ -208,6 +248,7 @@ async fn authorize_submit(
     let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_default();
     let request_state = params.get("state").cloned().unwrap_or_default();
     let action = params.get("action").cloned().unwrap_or_default();
+    let scope = params.get("scope").cloned().unwrap_or_default();
     let code_challenge = params.get("code_challenge").cloned().unwrap_or_default();
     let code_challenge_method = params.get("code_challenge_method").cloned().unwrap_or_default();
 
@@ -224,12 +265,13 @@ async fn authorize_submit(
     // Generate an authorization code
     let code = uuid::Uuid::new_v4().to_string();
 
-    // Store the code mapping
+    // Store the code mapping (now includes scope for refresh token decision)
     {
         let mut codes = state.auth_codes.lock().map_err(|_| server_error())?;
         codes.insert(code.clone(), AuthCodeEntry {
             client_id: client_id.clone(),
             redirect_uri: redirect_uri.clone(),
+            scope: scope.clone(),
             code_challenge: if code_challenge.is_empty() { None } else { Some(code_challenge) },
             code_challenge_method: if code_challenge_method.is_empty() { None } else { Some(code_challenge_method) },
         });
@@ -258,14 +300,64 @@ async fn token_endpoint(
     match grant_type {
         Some("client_credentials") => token_client_credentials(&state, &headers, &params),
         Some("authorization_code") => token_authorization_code(&state, &headers, &params),
+        Some("refresh_token") => token_refresh(&state, &headers, &params),
         _ => Err((
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
                 error: "unsupported_grant_type".to_string(),
-                error_description: "Supported grant types: client_credentials, authorization_code".to_string(),
+                error_description: "Supported grant types: client_credentials, authorization_code, refresh_token".to_string(),
             }),
         )),
     }
+}
+
+fn create_jwt_access_token(
+    state: &ServerState,
+    client_id: &str,
+    scope: &str,
+) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    let now = Utc::now().timestamp();
+    let claims = JwtClaims {
+        iss: state.issuer_url.clone(),
+        sub: client_id.to_string(),
+        aud: state.issuer_url.clone(),
+        exp: now + state.access_token_expiry as i64,
+        iat: now,
+        scope: scope.to_string(),
+        jti: uuid::Uuid::new_v4().to_string(),
+    };
+
+    encode(
+        &Header::default(),
+        &claims,
+        &EncodingKey::from_secret(&state.signing_key),
+    )
+    .map_err(|e| {
+        log::error!("failed to create JWT: {}", e);
+        server_error()
+    })
+}
+
+fn create_refresh_token(
+    state: &ServerState,
+    client_id: &str,
+    scope: &str,
+) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
+    let token = uuid::Uuid::new_v4().to_string();
+    let expires_at = Utc::now().timestamp() + state.refresh_token_expiry as i64;
+
+    let mut tokens = state.refresh_tokens.lock().map_err(|_| server_error())?;
+    tokens.insert(token.clone(), RefreshTokenEntry {
+        client_id: client_id.to_string(),
+        scope: scope.to_string(),
+        expires_at,
+    });
+
+    Ok(token)
+}
+
+fn has_offline_access(scope: &str) -> bool {
+    scope.split_whitespace().any(|s| s == "offline_access")
 }
 
 fn token_client_credentials(
@@ -287,11 +379,23 @@ fn token_client_credentials(
 
     validate_client(state, &client_id, &client_secret)?;
 
-    let access_token = uuid::Uuid::new_v4().to_string();
+    let scope = params.iter().find(|(k, _)| k == "scope")
+        .map(|(_, v)| v.as_str())
+        .unwrap_or("");
+
+    let access_token = create_jwt_access_token(state, &client_id, scope)?;
+
+    let refresh_token = if has_offline_access(scope) {
+        Some(create_refresh_token(state, &client_id, scope)?)
+    } else {
+        None
+    };
+
     Ok(Json(TokenResponse {
         access_token,
         token_type: "Bearer".to_string(),
-        expires_in: 3600,
+        expires_in: state.access_token_expiry,
+        refresh_token,
     }))
 }
 
@@ -408,11 +512,98 @@ fn token_authorization_code(
 
     validate_client(state, &client_id, &client_secret)?;
 
-    let access_token = uuid::Uuid::new_v4().to_string();
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope)?;
+
+    let refresh_token = if has_offline_access(&entry.scope) {
+        Some(create_refresh_token(state, &client_id, &entry.scope)?)
+    } else {
+        None
+    };
+
     Ok(Json(TokenResponse {
         access_token,
         token_type: "Bearer".to_string(),
-        expires_in: 3600,
+        expires_in: state.access_token_expiry,
+        refresh_token,
+    }))
+}
+
+fn token_refresh(
+    state: &ServerState,
+    headers: &HeaderMap,
+    params: &[(String, String)],
+) -> Result<Json<TokenResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let refresh_token_value = params.iter().find(|(k, _)| k == "refresh_token")
+        .map(|(_, v)| v.as_str())
+        .ok_or_else(|| (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "Missing 'refresh_token' parameter".to_string(),
+            }),
+        ))?;
+
+    // Look up the refresh token (don't consume it — refresh tokens are reusable)
+    let entry = {
+        let tokens = state.refresh_tokens.lock().map_err(|_| server_error())?;
+        tokens.get(refresh_token_value).cloned()
+    };
+
+    let entry = entry.ok_or_else(|| (
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "Invalid refresh token".to_string(),
+        }),
+    ))?;
+
+    // Check expiration
+    if Utc::now().timestamp() > entry.expires_at {
+        // Remove expired token
+        let mut tokens = state.refresh_tokens.lock().map_err(|_| server_error())?;
+        tokens.remove(refresh_token_value);
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Refresh token has expired".to_string(),
+            }),
+        ));
+    }
+
+    // Authenticate the client
+    let (client_id, client_secret) = extract_credentials_from_body(params)
+        .or_else(|| extract_credentials_from_basic_auth(headers))
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "invalid_client".to_string(),
+                    error_description: "Client credentials not provided".to_string(),
+                }),
+            )
+        })?;
+
+    // Verify client_id matches
+    if client_id != entry.client_id {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: "client_id does not match the refresh token".to_string(),
+            }),
+        ));
+    }
+
+    validate_client(state, &client_id, &client_secret)?;
+
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope)?;
+
+    Ok(Json(TokenResponse {
+        access_token,
+        token_type: "Bearer".to_string(),
+        expires_in: state.access_token_expiry,
+        refresh_token: None,
     }))
 }
 
