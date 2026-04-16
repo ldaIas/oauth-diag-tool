@@ -499,6 +499,46 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   letter-spacing: 0.06em;
 }
 
+.resource-section {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.resource-section-header {
+  display: flex;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.section-label {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.resource-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  font-style: italic;
+  margin-bottom: 8px;
+  word-break: break-all;
+}
+
+.resource-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 0 4px 16px;
+}
+
+.resource-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 4px 0;
+}
+
 .client-section {
   padding-top: 8px;
   border-top: 1px solid var(--border);

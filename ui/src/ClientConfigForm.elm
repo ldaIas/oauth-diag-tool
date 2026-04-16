@@ -7,6 +7,7 @@ module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, in
 import Html exposing (..)
 import Html.Attributes exposing (checked, class, placeholder, selected, type_, value)
 import Html.Events exposing (onClick, onInput)
+import Json.Decode as Decode
 
 
 -- MODEL
@@ -95,43 +96,12 @@ parseExtraParams str =
         []
 
     else
-        let
-            trimmed =
-                str
-                    |> String.trim
-                    |> (\s ->
-                            if String.startsWith "{" s && String.endsWith "}" s then
-                                String.slice 1 (String.length s - 1) s
+        case Decode.decodeString (Decode.keyValuePairs Decode.string) str of
+            Ok pairs ->
+                List.map (\( k, v ) -> { key = k, value = v }) pairs
 
-                            else
-                                s
-                       )
-
-            pairs =
-                String.split "," trimmed
-        in
-        List.filterMap
-            (\pair ->
-                case String.split ":" pair of
-                    [ k, v ] ->
-                        Just
-                            { key = String.trim k |> stripQuotes
-                            , value = String.trim v |> stripQuotes
-                            }
-
-                    _ ->
-                        Nothing
-            )
-            pairs
-
-
-stripQuotes : String -> String
-stripQuotes s =
-    if String.startsWith "\"" s && String.endsWith "\"" s then
-        String.slice 1 (String.length s - 1) s
-
-    else
-        s
+            Err _ ->
+                []
 
 
 

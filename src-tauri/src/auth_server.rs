@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use rand::Rng;
 use rand::distributions::Alphanumeric;
 use tokio::task::JoinHandle;
+use tokio::sync::oneshot;
 
 use crate::oauth_server;
 
@@ -34,17 +35,36 @@ pub struct ServerConfig {
     pub refresh_token_expiry: i64,
 }
 
+struct RunningServer {
+    handle: JoinHandle<()>,
+    shutdown_tx: oneshot::Sender<()>,
+}
+
 pub struct RunningServers {
-    pub servers: HashMap<i64, JoinHandle<()>>,
+    servers: HashMap<i64, RunningServer>,
     pub runtime: tokio::runtime::Runtime,
+}
+
+impl RunningServers {
+    pub fn new(runtime: tokio::runtime::Runtime) -> Self {
+        Self {
+            servers: HashMap::new(),
+            runtime,
+        }
+    }
+
+    pub fn is_running(&self, id: &i64) -> bool {
+        self.servers.contains_key(id)
+    }
 }
 
 impl Drop for RunningServers {
     fn drop(&mut self) {
         log::info!("Shutting down all running OAuth servers");
-        for (id, handle) in self.servers.drain() {
+        for (id, server) in self.servers.drain() {
             log::info!("Stopping server id={}", id);
-            handle.abort();
+            let _ = server.shutdown_tx.send(());
+            server.handle.abort();
         }
     }
 }
@@ -100,7 +120,7 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
         })?;
 
     for server in &mut configs {
-        server.running = running.servers.contains_key(&server.id);
+        server.running = running.is_running(&server.id);
         let clients = client_stmt
             .query_map(rusqlite::params![server.id], |row| {
                 Ok(OAuthClient {
@@ -123,8 +143,9 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
 pub fn delete(conn: &Connection, running: &mut RunningServers, id: i64) -> Result<(), String> {
     log::info!("delete_server_config: id={}", id);
 
-    if let Some(handle) = running.servers.remove(&id) {
-        handle.abort();
+    if let Some(server) = running.servers.remove(&id) {
+        let _ = server.shutdown_tx.send(());
+        server.handle.abort();
         log::info!("stopped running server before deletion: id={}", id);
     }
 
@@ -195,10 +216,10 @@ pub fn update_settings(
     Ok(())
 }
 
-pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64) -> Result<(), String> {
+pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64, app_handle: tauri::AppHandle) -> Result<(), String> {
     log::info!("start_server: id={}", id);
 
-    if running.servers.contains_key(&id) {
+    if running.is_running(&id) {
         return Err("Server is already running".to_string());
     }
 
@@ -237,9 +258,11 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64)
         access_token_expiry: access_token_expiry as u64,
         refresh_token_expiry: refresh_token_expiry as u64,
         signing_key,
+        app_handle,
     };
 
     let router = oauth_server::build_router(server_state);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
     let handle = running.runtime.spawn(async move {
         let addr = format!("0.0.0.0:{}", port);
@@ -251,20 +274,26 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64)
                 return;
             }
         };
-        if let Err(e) = axum::serve(listener, router).await {
+        if let Err(e) = axum::serve(listener, router)
+            .with_graceful_shutdown(async { let _ = shutdown_rx.await; })
+            .await
+        {
             log::error!("OAuth server error: {}", e);
         }
     });
 
-    running.servers.insert(id, handle);
+    running.servers.insert(id, RunningServer { handle, shutdown_tx });
     log::info!("server started on port {}", port);
     Ok(())
 }
 
 pub fn stop(running: &mut RunningServers, id: i64) -> Result<(), String> {
     log::info!("stop_server: id={}", id);
-    if let Some(handle) = running.servers.remove(&id) {
-        handle.abort();
+    if let Some(server) = running.servers.remove(&id) {
+        // Signal graceful shutdown so the TCP listener is released
+        let _ = server.shutdown_tx.send(());
+        // Wait for the server task to finish so the port is freed
+        let _ = running.runtime.block_on(server.handle);
         log::info!("server stopped: id={}", id);
         Ok(())
     } else {

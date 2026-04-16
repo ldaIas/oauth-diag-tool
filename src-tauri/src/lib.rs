@@ -136,12 +136,13 @@ fn update_server_settings(
 
 #[tauri::command]
 fn start_server(
+    app_handle: tauri::AppHandle,
     db_state: tauri::State<'_, Arc<Mutex<Connection>>>,
     running_state: tauri::State<'_, Mutex<RunningServers>>,
     id: i64,
 ) -> Result<(), String> {
     let mut running = running_state.lock().map_err(|e| e.to_string())?;
-    auth_server::start(&db_state, &mut running, id)
+    auth_server::start(&db_state, &mut running, id, app_handle)
 }
 
 #[tauri::command]
@@ -244,10 +245,7 @@ pub fn run() {
 
       let runtime = tokio::runtime::Runtime::new()
           .expect("failed to create tokio runtime");
-      app.manage(Mutex::new(RunningServers {
-          servers: HashMap::new(),
-          runtime,
-      }));
+      app.manage(Mutex::new(RunningServers::new(runtime)));
 
       let pending: PendingAuthorizations = Arc::new(Mutex::new(HashMap::new()));
       app.manage(pending);
