@@ -245,10 +245,7 @@ pub fn run() {
 
       let runtime = tokio::runtime::Runtime::new()
           .expect("failed to create tokio runtime");
-      app.manage(Mutex::new(RunningServers {
-          servers: HashMap::new(),
-          runtime,
-      }));
+      app.manage(Mutex::new(RunningServers::new(runtime)));
 
       let pending: PendingAuthorizations = Arc::new(Mutex::new(HashMap::new()));
       app.manage(pending);
