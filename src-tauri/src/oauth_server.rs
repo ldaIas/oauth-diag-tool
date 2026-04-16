@@ -3,8 +3,8 @@
 
 use axum::{
     extract::{Query, State},
-    http::{HeaderMap, StatusCode},
-    response::{Html, Json, Redirect},
+    http::{HeaderMap, HeaderValue, StatusCode},
+    response::{Html, IntoResponse, Json, Redirect},
     routing::{get, post},
     Router,
 };
@@ -16,6 +16,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use tauri::{AppHandle, Emitter};
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -35,6 +36,18 @@ pub struct ServerState {
     pub refresh_token_expiry: u64,
     /// HMAC-SHA256 signing key for JWT access tokens
     pub signing_key: Vec<u8>,
+    /// Tauri app handle for emitting events to the frontend
+    pub app_handle: AppHandle,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResourceAccessInfo {
+    pub server_id: i64,
+    pub client_id: String,
+    pub status: u16,
+    pub error: Option<String>,
+    pub timestamp: String,
 }
 
 #[derive(Clone)]
@@ -57,7 +70,8 @@ pub struct RefreshTokenEntry {
 struct JwtClaims {
     iss: String,
     sub: String,
-    aud: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    aud: Option<String>,
     exp: i64,
     iat: i64,
     scope: String,
@@ -107,6 +121,7 @@ pub fn build_router(state: ServerState) -> Router {
         .route("/authorize", get(authorize_endpoint))
         .route("/authorize", post(authorize_submit))
         .route("/token", post(token_endpoint))
+        .route("/resource", get(resource_endpoint))
         .with_state(state)
 }
 
@@ -315,12 +330,14 @@ fn create_jwt_access_token(
     state: &ServerState,
     client_id: &str,
     scope: &str,
+    resource: Option<&str>,
 ) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     let now = Utc::now().timestamp();
+    let aud = resource.map(|r| r.to_string());
     let claims = JwtClaims {
         iss: state.issuer_url.clone(),
         sub: client_id.to_string(),
-        aud: state.issuer_url.clone(),
+        aud,
         exp: now + state.access_token_expiry as i64,
         iat: now,
         scope: scope.to_string(),
@@ -383,7 +400,10 @@ fn token_client_credentials(
         .map(|(_, v)| v.as_str())
         .unwrap_or("");
 
-    let access_token = create_jwt_access_token(state, &client_id, scope)?;
+    let resource = params.iter().find(|(k, _)| k == "resource")
+        .map(|(_, v)| v.as_str());
+
+    let access_token = create_jwt_access_token(state, &client_id, scope, resource)?;
 
     let refresh_token = if has_offline_access(scope) {
         Some(create_refresh_token(state, &client_id, scope)?)
@@ -512,7 +532,10 @@ fn token_authorization_code(
 
     validate_client(state, &client_id, &client_secret)?;
 
-    let access_token = create_jwt_access_token(state, &client_id, &entry.scope)?;
+    let resource = params.iter().find(|(k, _)| k == "resource")
+        .map(|(_, v)| v.as_str());
+
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource)?;
 
     let refresh_token = if has_offline_access(&entry.scope) {
         Some(create_refresh_token(state, &client_id, &entry.scope)?)
@@ -597,7 +620,10 @@ fn token_refresh(
 
     validate_client(state, &client_id, &client_secret)?;
 
-    let access_token = create_jwt_access_token(state, &client_id, &entry.scope)?;
+    let resource = params.iter().find(|(k, _)| k == "resource")
+        .map(|(_, v)| v.as_str());
+
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource)?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -661,4 +687,102 @@ fn extract_credentials_from_basic_auth(headers: &HeaderMap) -> Option<(String, S
     let decoded_str = String::from_utf8(decoded).ok()?;
     let (client_id, client_secret) = decoded_str.split_once(':')?;
     Some((client_id.to_string(), client_secret.to_string()))
+}
+
+fn emit_resource_access(state: &ServerState, client_id: &str, status: u16, error: Option<&str>) {
+    let info = ResourceAccessInfo {
+        server_id: state.server_id,
+        client_id: client_id.to_string(),
+        status,
+        error: error.map(|s| s.to_string()),
+        timestamp: Utc::now().to_rfc3339(),
+    };
+    let _ = state.app_handle.emit("resource-access", info);
+}
+
+async fn resource_endpoint(
+    State(state): State<ServerState>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
+    let auth_header = match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        Some(h) => h.to_string(),
+        None => {
+            emit_resource_access(&state, "", 401, Some("Missing Authorization header"));
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer error=\"missing_token\""))],
+                Json(serde_json::json!({
+                    "error": "invalid_request",
+                    "error_description": "Missing Authorization header"
+                })),
+            );
+        }
+    };
+
+    let token = match auth_header.strip_prefix("Bearer ") {
+        Some(t) => t.to_string(),
+        None => {
+            emit_resource_access(&state, "", 401, Some("Authorization header must use Bearer scheme"));
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer error=\"invalid_request\""))],
+                Json(serde_json::json!({
+                    "error": "invalid_request",
+                    "error_description": "Authorization header must use Bearer scheme"
+                })),
+            );
+        }
+    };
+
+    let resource_url = format!("{}/resource", state.issuer_url);
+
+    // First decode without audience validation to inspect claims on mismatch
+    let mut validation_no_aud = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+    validation_no_aud.set_audience::<&str>(&[]);
+    validation_no_aud.validate_aud = false;
+
+    let token_data = match jsonwebtoken::decode::<JwtClaims>(
+        &token,
+        &jsonwebtoken::DecodingKey::from_secret(&state.signing_key),
+        &validation_no_aud,
+    ) {
+        Ok(data) => data,
+        Err(e) => {
+            let error_msg = format!("Token validation failed: {}", e);
+            emit_resource_access(&state, "", 401, Some(&error_msg));
+            return (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_str(&format!("Bearer error=\"invalid_token\"")).unwrap_or(HeaderValue::from_static("Bearer error=\"invalid_token\"")))],
+                Json(serde_json::json!({
+                    "error": "invalid_token",
+                    "error_description": error_msg
+                })),
+            );
+        }
+    };
+
+    // Validate audience matches the resource endpoint
+    let token_aud = token_data.claims.aud.as_deref().unwrap_or("");
+    if token_aud != resource_url {
+        let error_msg = format!(
+            "Audience \"{}\" does not match resource identifier \"{}\"",
+            token_aud, resource_url
+        );
+        emit_resource_access(&state, &token_data.claims.sub, 401, Some(&error_msg));
+        return (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_str(&format!("Bearer error=\"invalid_token\"")).unwrap_or(HeaderValue::from_static("Bearer error=\"invalid_token\"")))],
+            Json(serde_json::json!({
+                "error": "invalid_token",
+                "error_description": error_msg
+            })),
+        );
+    }
+
+    emit_resource_access(&state, &token_data.claims.sub, 200, None);
+    (
+        StatusCode::OK,
+        [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static(""))],
+        Json(serde_json::to_value(&token_data.claims).unwrap_or_default()),
+    )
 }

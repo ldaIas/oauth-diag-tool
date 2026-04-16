@@ -85,6 +85,9 @@ port fetchServerMetadata : Encode.Value -> Cmd msg
 port receiveServerMetadata : (Decode.Value -> msg) -> Sub msg
 
 
+port receiveResourceAccess : (Decode.Value -> msg) -> Sub msg
+
+
 
 -- MODEL
 
@@ -676,6 +679,13 @@ subscriptions _ =
 
                     Err _ ->
                         GotCallbackUrl ""
+            )
+        , receiveResourceAccess
+            (\val ->
+                ServerListMsg
+                    (ServerList.GotResourceAccess
+                        (Decode.decodeValue ServerList.resourceAccessDecoder val)
+                    )
             )
         ]
 

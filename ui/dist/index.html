@@ -228,6 +228,12 @@
         });
       });
 
+      waitForTauri(function() {
+        window.__TAURI__.event.listen("resource-access", function(event) {
+          app.ports.receiveResourceAccess.send(event.payload);
+        });
+      });
+
       app.ports.authorizeClient.subscribe(function(data) {
         waitForTauri(function() {
           window.__TAURI__.core.invoke("authorize_client", {

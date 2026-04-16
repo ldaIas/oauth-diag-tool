@@ -195,7 +195,7 @@ pub fn update_settings(
     Ok(())
 }
 
-pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64) -> Result<(), String> {
+pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64, app_handle: tauri::AppHandle) -> Result<(), String> {
     log::info!("start_server: id={}", id);
 
     if running.servers.contains_key(&id) {
@@ -237,6 +237,7 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64)
         access_token_expiry: access_token_expiry as u64,
         refresh_token_expiry: refresh_token_expiry as u64,
         signing_key,
+        app_handle,
     };
 
     let router = oauth_server::build_router(server_state);

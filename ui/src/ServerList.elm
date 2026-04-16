@@ -2,7 +2,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, init, serverConfigDecoder, update, view)
+module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, ResourceAccess, init, resourceAccessDecoder, serverConfigDecoder, update, view)
 
 import Html exposing (..)
 import Html.Attributes exposing (class, disabled, placeholder, type_, value)
@@ -21,6 +21,15 @@ type alias Client =
     }
 
 
+type alias ResourceAccess =
+    { serverId : String
+    , clientId : String
+    , status : Int
+    , error : Maybe String
+    , timestamp : String
+    }
+
+
 type alias OAuthServer =
     { id : String
     , name : String
@@ -33,6 +42,7 @@ type alias OAuthServer =
     , redirectUrlOverride : String
     , accessTokenExpiry : Int
     , refreshTokenExpiry : Int
+    , lastResourceAccess : Maybe ResourceAccess
     }
 
 
@@ -83,6 +93,7 @@ type Msg
     | SettingsSaved String
     | ClearSettingsSaved String
     | GotServerConfigs (Result Decode.Error (List OAuthServer))
+    | GotResourceAccess (Result Decode.Error ResourceAccess)
 
 
 type Action
@@ -211,6 +222,27 @@ update msg model =
                 Err _ ->
                     ( model, NoAction )
 
+        GotResourceAccess result ->
+            case result of
+                Ok access ->
+                    ( { model
+                        | servers =
+                            List.map
+                                (\s ->
+                                    if s.id == access.serverId then
+                                        { s | lastResourceAccess = Just access }
+
+                                    else
+                                        s
+                                )
+                                model.servers
+                      }
+                    , NoAction
+                    )
+
+                Err _ ->
+                    ( model, NoAction )
+
 
 updateSettingsEdit : String -> (SettingsEdit -> SettingsEdit) -> List ( String, SettingsEdit ) -> List ( String, SettingsEdit )
 updateSettingsEdit serverId fn edits =
@@ -276,6 +308,16 @@ clientDecoder =
         (Decode.field "clientSecret" Decode.string)
 
 
+resourceAccessDecoder : Decode.Decoder ResourceAccess
+resourceAccessDecoder =
+    Decode.map5 ResourceAccess
+        (Decode.field "serverId" (Decode.int |> Decode.map String.fromInt))
+        (Decode.field "clientId" Decode.string)
+        (Decode.field "status" Decode.int)
+        (Decode.field "error" (Decode.nullable Decode.string))
+        (Decode.field "timestamp" Decode.string)
+
+
 serverConfigDecoder : Decode.Decoder OAuthServer
 serverConfigDecoder =
     Decode.field "id" Decode.int
@@ -298,6 +340,7 @@ serverConfigDecoder =
                         , redirectUrlOverride = redirectOverride
                         , accessTokenExpiry = accessExpiry
                         , refreshTokenExpiry = refreshExpiry
+                        , lastResourceAccess = Nothing
                         }
                     )
                     (Decode.field "configName" Decode.string)
@@ -404,6 +447,7 @@ viewServerCard model server =
               else
                 text ""
             ]
+        , viewResourceSection server
         , div [ class "client-section" ]
             [ div [ class "client-section-header" ]
                 [ span [ class "expandable-toggle", onClick (ToggleClients server.id) ]
@@ -484,6 +528,41 @@ viewSettingsForm serverId saved edits =
 
         Nothing ->
             text ""
+
+
+viewResourceSection : OAuthServer -> Html Msg
+viewResourceSection server =
+    div [ class "resource-section" ]
+        [ div [ class "resource-section-header" ]
+            [ span [ class "section-label" ] [ text "Resource" ] ]
+        , div [ class "resource-hint" ]
+            [ text ("Test your token by doing a request: GET " ++ server.issuerUrl ++ "/resource") ]
+        , div [ class "resource-hint" ]
+            [ text ("HINT: Add a \"resource\" parameter to your request when getting a token equal to " ++ server.issuerUrl ++ "/resource") ]
+        , case server.lastResourceAccess of
+            Just access ->
+                div [ class "resource-details" ]
+                    [ viewDetail "Last Client" (if String.isEmpty access.clientId then "—" else access.clientId)
+                    , viewDetail "Status"
+                        (if access.status == 200 then
+                            "200 OK"
+
+                         else
+                            String.fromInt access.status
+                        )
+                    , case access.error of
+                        Just err ->
+                            viewDetail "Error" err
+
+                        Nothing ->
+                            viewDetail "Result" "Success"
+                    , viewDetail "Time" access.timestamp
+                    ]
+
+            Nothing ->
+                div [ class "resource-empty" ]
+                    [ text "No resource requests yet" ]
+        ]
 
 
 viewServerControls : OAuthServer -> Html Msg
