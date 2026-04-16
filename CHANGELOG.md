@@ -9,6 +9,7 @@
 - Main OAuth Server Overrides (redirect, access & refresh expiry) [PR](https://github.com/ldaIas/oauth-diag-tool/pull/4)
 - UI Label update [PR](https://github.com/ldaIas/oauth-diag-tool/pull/6)
 - Prepare for auto-update of application [PR](https://github.com/ldaIas/oauth-diag-tool/pull/7)
+- Resource endpoint and token validation [PR](https://github.com/ldaIas/oauth-diag-tool/pull/9)
 
 ## [0.0.1] - 2026-04-13
 ### Added
