@@ -30,6 +30,7 @@ type alias ClientConfig =
     , disabledTokenParams : String
     , scopesSupported : String
     , refreshToken : String
+    , disabledRefreshParams : String
     }
 
 
@@ -70,6 +71,7 @@ type alias Model =
     , expandedResults : Set String
     , expandedParams : Set String
     , expandedTokenParams : Set String
+    , expandedRefreshParams : Set String
     , expandedMetadata : Set String
     , metadataStates : Dict String MetadataState
     }
@@ -82,6 +84,7 @@ init =
     , expandedResults = Set.empty
     , expandedParams = Set.empty
     , expandedTokenParams = Set.empty
+    , expandedRefreshParams = Set.empty
     , expandedMetadata = Set.empty
     , metadataStates = Dict.empty
     }
@@ -102,6 +105,8 @@ type Msg
     | ToggleTokenParam String String
     | ToggleParamsSection String
     | ToggleTokenParamsSection String
+    | ToggleRefreshParam String String
+    | ToggleRefreshParamsSection String
     | ToggleMetadataSection String
     | FetchMetadata String String
     | GotMetadataResult (Result Decode.Error MetadataResult)
@@ -235,6 +240,41 @@ update msg model =
 
                 Nothing ->
                     ( model, NoAction )
+
+        ToggleRefreshParam configId paramName ->
+            let
+                updatedConfigs =
+                    List.map
+                        (\config ->
+                            if config.id == configId then
+                                { config | disabledRefreshParams = toggleDisabledParam paramName config.disabledRefreshParams }
+
+                            else
+                                config
+                        )
+                        model.configs
+
+                updatedConfig =
+                    List.filter (\c -> c.id == configId) updatedConfigs
+                        |> List.head
+            in
+            case updatedConfig of
+                Just config ->
+                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
+
+                Nothing ->
+                    ( model, NoAction )
+
+        ToggleRefreshParamsSection id ->
+            let
+                newExpanded =
+                    if Set.member id model.expandedRefreshParams then
+                        Set.remove id model.expandedRefreshParams
+
+                    else
+                        Set.insert id model.expandedRefreshParams
+            in
+            ( { model | expandedRefreshParams = newExpanded }, NoAction )
 
         ToggleMetadataSection id ->
             let
@@ -371,6 +411,7 @@ clientConfigDecoder =
         |> andMap (Decode.field "disabledTokenParams" Decode.string)
         |> andMap (Decode.field "scopesSupported" Decode.string)
         |> andMap (Decode.field "refreshToken" Decode.string)
+        |> andMap (Decode.field "disabledRefreshParams" Decode.string)
 
 
 metadataResultDecoder : Decode.Decoder MetadataResult
@@ -463,11 +504,11 @@ viewBody callbackUrl model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams model.expandedMetadata model.metadataStates) model.configs)
+            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams model.expandedRefreshParams model.expandedMetadata model.metadataStates) model.configs)
 
 
-viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
-viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams expandedMetadata metadataStates config =
+viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> Set String -> Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams expandedRefreshParams expandedMetadata metadataStates config =
     let
         state =
             Dict.get config.id authStates |> Maybe.withDefault Idle
@@ -537,6 +578,11 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
 
           else
             viewParamToggles expandedParams config
+        , if not (String.isEmpty config.refreshToken) then
+            viewRefreshParamToggles expandedRefreshParams config
+
+          else
+            text ""
         , viewMetadataSection expandedMetadata metadataStates config
         , if hasResult then
             div [ class "results-section" ]
@@ -734,6 +780,34 @@ viewTokenParamToggles expandedTokenParams config =
         , if isExpanded then
             div [ class "param-toggle-list" ]
                 (List.map (viewParamToggle ToggleTokenParam config.id config.disabledTokenParams) allParams)
+
+          else
+            text ""
+        ]
+
+
+viewRefreshParamToggles : Set String -> ClientConfig -> Html Msg
+viewRefreshParamToggles expandedRefreshParams config =
+    let
+        isExpanded =
+            Set.member config.id expandedRefreshParams
+
+        chevron =
+            if isExpanded then
+                "\u{25BC}"
+
+            else
+                "\u{25B6}"
+
+        refreshParams =
+            [ "grant_type", "refresh_token", "client_id", "client_secret", "scope" ]
+    in
+    div [ class "param-toggles" ]
+        [ span [ class "expandable-toggle", onClick (ToggleRefreshParamsSection config.id) ]
+            [ text (chevron ++ " Refresh Token Parameters") ]
+        , if isExpanded then
+            div [ class "param-toggle-list" ]
+                (List.map (viewParamToggle ToggleRefreshParam config.id config.disabledRefreshParams) refreshParams)
 
           else
             text ""
