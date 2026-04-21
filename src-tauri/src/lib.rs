@@ -87,9 +87,10 @@ fn create_client_config(
     disabled_params: String,
     disabled_token_params: String,
     scopes_supported: String,
+    disabled_refresh_params: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported)
+    auth_client::create(&conn, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported, &disabled_refresh_params)
 }
 
 #[tauri::command]
@@ -108,9 +109,10 @@ fn update_client_config(
     disabled_params: String,
     disabled_token_params: String,
     scopes_supported: String,
+    disabled_refresh_params: String,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported)
+    auth_client::update(&conn, id, &name, &issuer_url, &authorization_url, &token_url, &client_id, &client_secret, &scopes, &grant_type, &extra_params, &disabled_params, &disabled_token_params, &scopes_supported, &disabled_refresh_params)
 }
 
 #[tauri::command]
@@ -207,19 +209,20 @@ async fn refresh_token(
 ) -> Result<auth_client::AuthResponse, String> {
     log::info!("refresh_token called: id={}", id);
 
-    let (token_url, client_id, client_secret, scopes, refresh_tok, disabled_token) = {
+    let (token_url, client_id, client_secret, scopes, refresh_tok, disabled_refresh) = {
         let conn = state.lock().map_err(|e| e.to_string())?;
-        let (_grant_type, _authorization_url, token_url, client_id, client_secret, scopes, _extra_map, _disabled, disabled_token) =
+        let (_grant_type, _authorization_url, token_url, client_id, client_secret, scopes, _extra_map, _disabled, _disabled_token) =
             auth_client::lookup_config(&conn, id)?;
         let refresh_tok = auth_client::lookup_refresh_token(&conn, id)?;
         if refresh_tok.is_empty() {
             return Err("No refresh token stored for this config".to_string());
         }
-        (token_url, client_id, client_secret, scopes, refresh_tok, disabled_token)
+        let disabled_refresh = auth_client::lookup_disabled_refresh_params(&conn, id)?;
+        (token_url, client_id, client_secret, scopes, refresh_tok, disabled_refresh)
     };
 
     let result = auth_client::refresh_token_flow(
-        token_url, client_id, client_secret, refresh_tok, scopes, disabled_token,
+        token_url, client_id, client_secret, refresh_tok, scopes, disabled_refresh,
     ).await;
 
     // If the response contains a new refresh_token, save it (token rotation)

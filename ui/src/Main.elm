@@ -337,6 +337,7 @@ update msg model =
                             , ( "disabledParams", Encode.string config.disabledParams )
                             , ( "disabledTokenParams", Encode.string config.disabledTokenParams )
                             , ( "scopesSupported", Encode.string config.scopesSupported )
+                            , ( "disabledRefreshParams", Encode.string config.disabledRefreshParams )
                             ]
                         )
                     )
@@ -413,6 +414,7 @@ update msg model =
                                             , ( "disabledParams", Encode.string formWithMetadata.disabledParams )
                                             , ( "disabledTokenParams", Encode.string formWithMetadata.disabledTokenParams )
                                             , ( "scopesSupported", Encode.string metadata.scopesSupported )
+                                            , ( "disabledRefreshParams", Encode.string "{}" )
                                             ]
 
                                         cmd =
@@ -456,6 +458,7 @@ update msg model =
                                         , ( "disabledParams", Encode.string config.disabledParams )
                                         , ( "disabledTokenParams", Encode.string config.disabledTokenParams )
                                         , ( "scopesSupported", Encode.string config.scopesSupported )
+                                        , ( "disabledRefreshParams", Encode.string config.disabledRefreshParams )
                                         ]
                                     )
                                 )
@@ -515,6 +518,7 @@ update msg model =
                                         , ( "disabledParams", Encode.string newForm.disabledParams )
                                         , ( "disabledTokenParams", Encode.string newForm.disabledTokenParams )
                                         , ( "scopesSupported", Encode.string "" )
+                                        , ( "disabledRefreshParams", Encode.string "{}" )
                                         ]
 
                                     cmd =
