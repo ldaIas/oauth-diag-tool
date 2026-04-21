@@ -678,7 +678,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   flex: 2;
 }
 
-.btn-authorize:hover {
+.btn-authorize:hover,
+.btn-refresh-token:hover {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-dim);
@@ -687,6 +688,10 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .btn-authorize:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-refresh-token {
+  margin-left: 4px;
 }
 
 .btn-cancel-auth {

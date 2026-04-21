@@ -79,6 +79,9 @@ port receiveCallbackUrl : (Decode.Value -> msg) -> Sub msg
 port receiveAuthResult : (Decode.Value -> msg) -> Sub msg
 
 
+port refreshToken : Encode.Value -> Cmd msg
+
+
 port fetchServerMetadata : Encode.Value -> Cmd msg
 
 
@@ -336,6 +339,11 @@ update msg model =
                             , ( "scopesSupported", Encode.string config.scopesSupported )
                             ]
                         )
+                    )
+
+                ClientConfigList.RequestRefreshToken id ->
+                    ( { model | clientConfigList = newConfigList }
+                    , refreshToken (Encode.object [ ( "id", Encode.string id ) ])
                     )
 
                 ClientConfigList.RequestFetchMetadata configId issuerUrl ->

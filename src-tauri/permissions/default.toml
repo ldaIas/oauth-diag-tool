@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-cancel-authorization", "allow-fetch-server-metadata"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-refresh-token", "allow-cancel-authorization", "allow-fetch-server-metadata"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -71,6 +71,11 @@ commands.allow = ["get_callback_url"]
 identifier = "allow-authorize-client"
 description = "Allow authorizing with OAuth client configurations"
 commands.allow = ["authorize_client"]
+
+[[permission]]
+identifier = "allow-refresh-token"
+description = "Allow refreshing OAuth tokens"
+commands.allow = ["refresh_token"]
 
 [[permission]]
 identifier = "allow-cancel-authorization"

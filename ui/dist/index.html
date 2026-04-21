@@ -234,6 +234,26 @@
         });
       });
 
+      app.ports.refreshToken.subscribe(function(data) {
+        waitForTauri(function() {
+          window.__TAURI__.core.invoke("refresh_token", {
+            id: parseInt(data.id, 10)
+          }).then(function(result) {
+            result.configId = data.id;
+            try { result.body = JSON.stringify(JSON.parse(result.body), null, 2); } catch(e) {}
+            app.ports.receiveAuthResult.send(result);
+          }).catch(function(err) {
+            console.error("refresh_token failed:", err);
+            app.ports.receiveAuthResult.send({
+              configId: data.id,
+              statusCode: 0,
+              headers: [],
+              body: "Error: " + err
+            });
+          });
+        });
+      });
+
       app.ports.authorizeClient.subscribe(function(data) {
         waitForTauri(function() {
           window.__TAURI__.core.invoke("authorize_client", {
