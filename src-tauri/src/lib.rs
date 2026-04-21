@@ -172,7 +172,7 @@ async fn authorize_client(
         auth_client::lookup_config(&conn, id)?
     };
 
-    if grant_type == "authorization_code" {
+    let result = if grant_type == "authorization_code" {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel::<()>();
         {
             let mut pending_map = pending.lock().map_err(|e| e.to_string())?;
@@ -186,7 +186,53 @@ async fn authorize_client(
         result
     } else {
         auth_client::authorize_client_credentials(token_url, client_id, client_secret, scopes, extra_map, disabled).await
+    };
+
+    if let Ok(ref auth_resp) = result {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&auth_resp.body) {
+            if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str()) {
+                let conn = state.lock().map_err(|e| e.to_string())?;
+                let _ = auth_client::save_refresh_token(&conn, id, rt);
+            }
+        }
     }
+
+    result
+}
+
+#[tauri::command]
+async fn refresh_token(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+) -> Result<auth_client::AuthResponse, String> {
+    log::info!("refresh_token called: id={}", id);
+
+    let (token_url, client_id, client_secret, scopes, refresh_tok, disabled_token) = {
+        let conn = state.lock().map_err(|e| e.to_string())?;
+        let (_grant_type, _authorization_url, token_url, client_id, client_secret, scopes, _extra_map, _disabled, disabled_token) =
+            auth_client::lookup_config(&conn, id)?;
+        let refresh_tok = auth_client::lookup_refresh_token(&conn, id)?;
+        if refresh_tok.is_empty() {
+            return Err("No refresh token stored for this config".to_string());
+        }
+        (token_url, client_id, client_secret, scopes, refresh_tok, disabled_token)
+    };
+
+    let result = auth_client::refresh_token_flow(
+        token_url, client_id, client_secret, refresh_tok, scopes, disabled_token,
+    ).await;
+
+    // If the response contains a new refresh_token, save it (token rotation)
+    if let Ok(ref auth_resp) = result {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&auth_resp.body) {
+            if let Some(rt) = json.get("refresh_token").and_then(|v| v.as_str()) {
+                let conn = state.lock().map_err(|e| e.to_string())?;
+                let _ = auth_client::save_refresh_token(&conn, id, rt);
+            }
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
@@ -224,6 +270,7 @@ pub fn run() {
         stop_server,
         get_callback_url,
         authorize_client,
+        refresh_token,
         cancel_authorization,
         fetch_server_metadata,
     ])

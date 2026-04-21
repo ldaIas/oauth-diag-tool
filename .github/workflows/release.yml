@@ -60,10 +60,6 @@ jobs:
         run: npm install -g elm
         if: matrix.platform == 'windows-latest'
 
-      - name: Build Elm frontend
-        working-directory: ui
-        run: elm make src/Main.elm --optimize --output=dist/main.js
-
       - name: Build and release
         uses: tauri-apps/tauri-action@73e111f47ab8fda0af8f09997c91a9e1e83182a2 # v1
         env:

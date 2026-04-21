@@ -33,6 +33,7 @@ pub struct ClientConfig {
     pub disabled_params: String,
     pub disabled_token_params: String,
     pub scopes_supported: String,
+    pub refresh_token: String,
 }
 
 #[derive(Serialize)]
@@ -72,7 +73,7 @@ struct CallbackState {
 pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     log::info!("get_client_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported FROM oauth_client_configs")
+        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, refresh_token FROM oauth_client_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -93,6 +94,7 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
                 disabled_params: row.get(10)?,
                 disabled_token_params: row.get(11)?,
                 scopes_supported: row.get(12)?,
+                refresh_token: row.get(13)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -540,6 +542,57 @@ pub async fn fetch_server_metadata(issuer_url: &str) -> Result<ServerMetadataRes
         token_endpoint,
         scopes_supported,
     })
+}
+
+pub fn save_refresh_token(conn: &Connection, id: i64, refresh_token: &str) -> Result<(), String> {
+    conn.execute(
+        "UPDATE oauth_client_configs SET refresh_token = ?1 WHERE id = ?2",
+        rusqlite::params![refresh_token, id],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+pub fn lookup_refresh_token(conn: &Connection, id: i64) -> Result<String, String> {
+    conn.query_row(
+        "SELECT refresh_token FROM oauth_client_configs WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get(0),
+    )
+    .map_err(|e| e.to_string())
+}
+
+pub async fn refresh_token_flow(
+    token_url: String,
+    client_id: String,
+    client_secret: String,
+    refresh_token: String,
+    scopes: String,
+    disabled_token: HashSet<String>,
+) -> Result<AuthResponse, String> {
+    let mut params = vec![
+        ("grant_type".to_string(), "refresh_token".to_string()),
+        ("refresh_token".to_string(), refresh_token),
+    ];
+    if !disabled_token.contains("client_id") {
+        params.push(("client_id".to_string(), client_id));
+    }
+    if !disabled_token.contains("client_secret") {
+        params.push(("client_secret".to_string(), client_secret));
+    }
+    if !scopes.is_empty() && !disabled_token.contains("scope") {
+        params.push(("scope".to_string(), scopes));
+    }
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&token_url)
+        .form(&params)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    build_auth_response(response).await
 }
 
 fn open_chrome(url: &str) -> Result<(), String> {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-04-21
+- Main add refresh token flow + optimize elm output [PR](https://github.com/ldaIas/oauth-diag-tool/pull/11)
+
+
 ## [0.0.2] - 2026-04-15
 - Main tauri.conf.json Config update [PR](https://github.com/ldaIas/oauth-diag-tool/pull/1)
   - **BREAKING CHANGE** - Users will need to re-add clients and servers due to change in application data directory

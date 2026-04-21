@@ -9,7 +9,6 @@ import Html exposing (..)
 import Html.Attributes exposing (checked, class, type_)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
-import Json.Encode as Encode
 import Set exposing (Set)
 
 
@@ -30,6 +29,7 @@ type alias ClientConfig =
     , disabledParams : String
     , disabledTokenParams : String
     , scopesSupported : String
+    , refreshToken : String
     }
 
 
@@ -105,6 +105,7 @@ type Msg
     | ToggleMetadataSection String
     | FetchMetadata String String
     | GotMetadataResult (Result Decode.Error MetadataResult)
+    | RefreshTokenConfig String
     | GotAuthResult (Result Decode.Error AuthResult)
     | GotClientConfigs (Result Decode.Error (List ClientConfig))
 
@@ -116,6 +117,7 @@ type Action
     | RequestAuthorizeConfig String
     | RequestCancelAuthorize String
     | RequestUpdateConfig ClientConfig
+    | RequestRefreshToken String
     | RequestFetchMetadata String String
     | NoAction
 
@@ -138,6 +140,14 @@ update msg model =
                 , expandedResults = Set.insert id model.expandedResults
               }
             , RequestAuthorizeConfig id
+            )
+
+        RefreshTokenConfig id ->
+            ( { model
+                | authStates = Dict.insert id Loading model.authStates
+                , expandedResults = Set.insert id model.expandedResults
+              }
+            , RequestRefreshToken id
             )
 
         CancelAuthorize id ->
@@ -295,9 +305,35 @@ update msg model =
         GotAuthResult result ->
             case result of
                 Ok authResult ->
+                    let
+                        maybeRefreshToken =
+                            case Decode.decodeString (Decode.field "refresh_token" Decode.string) authResult.body of
+                                Ok rt ->
+                                    Just rt
+
+                                Err _ ->
+                                    Nothing
+
+                        updatedConfigs =
+                            case maybeRefreshToken of
+                                Just rt ->
+                                    List.map
+                                        (\c ->
+                                            if c.id == authResult.configId then
+                                                { c | refreshToken = rt }
+
+                                            else
+                                                c
+                                        )
+                                        model.configs
+
+                                Nothing ->
+                                    model.configs
+                    in
                     ( { model
                         | authStates = Dict.insert authResult.configId (Done authResult) model.authStates
                         , expandedResults = Set.insert authResult.configId model.expandedResults
+                        , configs = updatedConfigs
                       }
                     , NoAction
                     )
@@ -334,6 +370,7 @@ clientConfigDecoder =
         |> andMap (Decode.field "disabledParams" Decode.string)
         |> andMap (Decode.field "disabledTokenParams" Decode.string)
         |> andMap (Decode.field "scopesSupported" Decode.string)
+        |> andMap (Decode.field "refreshToken" Decode.string)
 
 
 metadataResultDecoder : Decode.Decoder MetadataResult
@@ -460,7 +497,7 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
                 , span [ class "server-meta" ] [ text config.grantType ]
                 ]
             , div [ class "server-card-right" ]
-                [ viewAuthorizeButton state config.id
+                [ viewAuthorizeButton state config
                 , button [ class "btn-import", onClick (EditConfig config) ] [ text "Edit" ]
                 , button [ class "btn-delete", onClick (DeleteConfig config.id) ] [ text "\u{1F5D1}" ]
                 ]
@@ -720,20 +757,28 @@ viewParamToggle toggleMsg configId disabledParams paramName =
         ]
 
 
-viewAuthorizeButton : AuthState -> String -> Html Msg
-viewAuthorizeButton state configId =
+viewAuthorizeButton : AuthState -> ClientConfig -> Html Msg
+viewAuthorizeButton state config =
     case state of
         Loading ->
             span []
                 [ button [ class "btn-server-control btn-authorize", Html.Attributes.disabled True ]
                     [ text "Authorizing..." ]
-                , button [ class "btn-server-control btn-cancel-auth", onClick (CancelAuthorize configId) ]
+                , button [ class "btn-server-control btn-cancel-auth", onClick (CancelAuthorize config.id) ]
                     [ text "Cancel" ]
                 ]
 
         _ ->
-            button [ class "btn-server-control btn-authorize", onClick (AuthorizeConfig configId) ]
-                [ text "Authorize" ]
+            span []
+                [ button [ class "btn-server-control btn-authorize", onClick (AuthorizeConfig config.id) ]
+                    [ text "Authorize" ]
+                , if not (String.isEmpty config.refreshToken) then
+                    button [ class "btn-server-control btn-refresh-token", onClick (RefreshTokenConfig config.id) ]
+                        [ text "Refresh Token" ]
+
+                  else
+                    text ""
+                ]
 
 
 viewAuthResponse : AuthState -> Html Msg

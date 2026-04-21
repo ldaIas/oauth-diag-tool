@@ -38,7 +38,8 @@ const SCHEMA: &str = "
         extra_params TEXT NOT NULL DEFAULT '',
         disabled_params TEXT NOT NULL DEFAULT '{}',
         disabled_token_params TEXT NOT NULL DEFAULT '{}',
-        scopes_supported TEXT NOT NULL DEFAULT ''
+        scopes_supported TEXT NOT NULL DEFAULT '',
+        refresh_token TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -54,9 +55,10 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (5, "ALTER TABLE server_configs ADD COLUMN redirect_url_override TEXT NOT NULL DEFAULT '';"),
     (6, "ALTER TABLE server_configs ADD COLUMN access_token_expiry INTEGER NOT NULL DEFAULT 3600;"),
     (7, "ALTER TABLE server_configs ADD COLUMN refresh_token_expiry INTEGER NOT NULL DEFAULT 86400;"),
+    (8, "ALTER TABLE oauth_client_configs ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';"),
 ];
 
-const LATEST_VERSION: i64 = 7;
+const LATEST_VERSION: i64 = 8;
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let count: i64 = conn.query_row(
