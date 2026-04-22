@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.0.6] -2026-04-22
+- Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)
+
 ## [0.0.5] - 2026-04-22
 - Add debug statements for the auto updater [PR](https://github.com/ldaIas/oauth-diag-tool/pull/14)
 
