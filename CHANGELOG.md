@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-04-22
+- Add debug statements for the auto updater [PR](https://github.com/ldaIas/oauth-diag-tool/pull/14)
+
 ## [0.0.4] - 2026-04-22
 - Bump version as it was missed in last update [PR](https://github.com/ldaIas/oauth-diag-tool/pull/13)
 
