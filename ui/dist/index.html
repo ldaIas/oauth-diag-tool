@@ -14,23 +14,19 @@
 
       async function checkForUpdates() {
         try {
-          console.log("[updater] Checking for updates...");
           var check = await window.__TAURI__.updater.check();
-          console.log("[updater] Result:", JSON.stringify(check));
           if (check && check.available) {
-            console.log("[updater] Update available: v" + check.version);
-            var accepted = confirm(
-              "A new version (" + check.version + ") is available. Would you like to update now?"
+            var accepted = await window.__TAURI__.dialog.confirm(
+              "A new version (" + check.version + ") is available. Would you like to update now?",
+              { title: "Update Available", kind: "info" }
             );
             if (accepted) {
               await check.downloadAndInstall();
               await window.__TAURI__.process.relaunch();
             }
-          } else {
-            console.log("[updater] No update available (current version is latest).");
           }
         } catch (err) {
-          console.error("[updater] Check failed:", err);
+          console.error("Update check failed:", err);
         }
       }
 
