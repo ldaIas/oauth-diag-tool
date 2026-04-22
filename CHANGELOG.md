@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-04-22
+- Bump version as it was missed in last update [PR](https://github.com/ldaIas/oauth-diag-tool/pull/13)
+
 ## [0.0.3] - 2026-04-21
 - Main add refresh token flow + optimize elm output [PR](https://github.com/ldaIas/oauth-diag-tool/pull/11)
 
