@@ -1,6 +1,6 @@
 [package]
 name = "oauth-diagnostic-tool"
-version = "0.0.2"
+version = "0.0.4"
 description = "Tool for going through the auth server and client side of OAuth flows"
 authors = ["Sam Sovereign"]
 license = "Apache 2.0"
