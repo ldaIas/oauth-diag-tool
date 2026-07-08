@@ -15,7 +15,6 @@ use axum::{
 };
 
 const CALLBACK_PORT: u16 = 5757;
-const CALLBACK_URL: &str = "http://localhost:5757/callback";
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,6 +34,38 @@ pub struct ClientConfig {
     pub scopes_supported: String,
     pub refresh_token: String,
     pub disabled_refresh_params: String,
+}
+
+/// Field payload shared by the create and update client-config commands.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientConfigInput {
+    pub name: String,
+    pub issuer_url: String,
+    pub authorization_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub scopes: String,
+    pub grant_type: String,
+    pub extra_params: String,
+    pub disabled_params: String,
+    pub disabled_token_params: String,
+    pub scopes_supported: String,
+    pub disabled_refresh_params: String,
+}
+
+/// A client config resolved from the database with its JSON blobs parsed.
+pub struct ResolvedClientConfig {
+    pub grant_type: String,
+    pub authorization_url: String,
+    pub token_url: String,
+    pub client_id: String,
+    pub client_secret: String,
+    pub scopes: String,
+    pub extra_params: HashMap<String, String>,
+    pub disabled_params: HashSet<String>,
+    pub disabled_token_params: HashSet<String>,
 }
 
 #[derive(Serialize)]
@@ -64,10 +95,14 @@ struct CallbackQuery {
     error_description: Option<String>,
 }
 
+type CodeResultSender = tokio::sync::oneshot::Sender<Result<String, String>>;
+
 #[derive(Clone)]
 struct CallbackState {
-    tx: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Result<String, String>>>>>,
-    expected_state: String,
+    tx: Arc<Mutex<Option<CodeResultSender>>>,
+    /// None when the `state` parameter was disabled for this request, in which
+    /// case the callback must not require it to be echoed back.
+    expected_state: Option<String>,
     auth_url: String,
 }
 
@@ -106,26 +141,11 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     Ok(configs)
 }
 
-pub fn create(
-    conn: &Connection,
-    name: &str,
-    issuer_url: &str,
-    authorization_url: &str,
-    token_url: &str,
-    client_id: &str,
-    client_secret: &str,
-    scopes: &str,
-    grant_type: &str,
-    extra_params: &str,
-    disabled_params: &str,
-    disabled_token_params: &str,
-    scopes_supported: &str,
-    disabled_refresh_params: &str,
-) -> Result<(), String> {
-    log::info!("create_client_config: name={}", name);
+pub fn create(conn: &Connection, config: &ClientConfigInput) -> Result<(), String> {
+    log::info!("create_client_config: name={}", config.name);
     conn.execute(
         "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, disabled_refresh_params) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, disabled_refresh_params],
+        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params],
     )
     .map_err(|e| {
         log::error!("failed to insert client config: {}", e);
@@ -135,27 +155,11 @@ pub fn create(
     Ok(())
 }
 
-pub fn update(
-    conn: &Connection,
-    id: i64,
-    name: &str,
-    issuer_url: &str,
-    authorization_url: &str,
-    token_url: &str,
-    client_id: &str,
-    client_secret: &str,
-    scopes: &str,
-    grant_type: &str,
-    extra_params: &str,
-    disabled_params: &str,
-    disabled_token_params: &str,
-    scopes_supported: &str,
-    disabled_refresh_params: &str,
-) -> Result<(), String> {
+pub fn update(conn: &Connection, id: i64, config: &ClientConfigInput) -> Result<(), String> {
     log::info!("update_client_config: id={}", id);
     conn.execute(
-        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12, disabled_refresh_params = ?14 WHERE id = ?13",
-        rusqlite::params![name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, id, disabled_refresh_params],
+        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12, disabled_refresh_params = ?13 WHERE id = ?14",
+        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, id],
     )
     .map_err(|e| {
         log::error!("failed to update client config: {}", e);
@@ -180,10 +184,15 @@ pub fn delete(conn: &Connection, id: i64) -> Result<(), String> {
 }
 
 pub fn callback_url() -> String {
-    CALLBACK_URL.to_string()
+    format!("http://localhost:{}/callback", CALLBACK_PORT)
 }
 
-pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, String, String, String, String, HashMap<String, String>, HashSet<String>, HashSet<String>), String> {
+fn parse_disabled_set(json: &str) -> HashSet<String> {
+    let map: HashMap<String, bool> = serde_json::from_str(json).unwrap_or_default();
+    map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect()
+}
+
+pub fn lookup_config(conn: &Connection, id: i64) -> Result<ResolvedClientConfig, String> {
     let mut stmt = conn
         .prepare("SELECT grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params, disabled_params, disabled_token_params FROM oauth_client_configs WHERE id = ?1")
         .map_err(|e| e.to_string())?;
@@ -202,49 +211,43 @@ pub fn lookup_config(conn: &Connection, id: i64) -> Result<(String, String, Stri
     })
     .map_err(|e| e.to_string())?;
 
-    let extra_map: HashMap<String, String> = if extra_params_str.is_empty() {
+    let extra_params: HashMap<String, String> = if extra_params_str.is_empty() {
         HashMap::new()
     } else {
         serde_json::from_str(&extra_params_str).unwrap_or_default()
     };
 
-    let disabled: HashSet<String> = {
-        let map: HashMap<String, bool> = serde_json::from_str(&disabled_params_str).unwrap_or_default();
-        map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect()
-    };
-
-    let disabled_token: HashSet<String> = {
-        let map: HashMap<String, bool> = serde_json::from_str(&disabled_token_params_str).unwrap_or_default();
-        map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect()
-    };
-
-    Ok((grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_map, disabled, disabled_token))
+    Ok(ResolvedClientConfig {
+        grant_type,
+        authorization_url,
+        token_url,
+        client_id,
+        client_secret,
+        scopes,
+        extra_params,
+        disabled_params: parse_disabled_set(&disabled_params_str),
+        disabled_token_params: parse_disabled_set(&disabled_token_params_str),
+    })
 }
 
-pub async fn authorize_client_credentials(
-    token_url: String,
-    client_id: String,
-    client_secret: String,
-    scopes: String,
-    extra_map: HashMap<String, String>,
-    disabled: HashSet<String>,
-) -> Result<AuthResponse, String> {
+pub async fn authorize_client_credentials(config: ResolvedClientConfig) -> Result<AuthResponse, String> {
+    let disabled = &config.disabled_params;
     let mut params = vec![
         ("grant_type".to_string(), "client_credentials".to_string()),
     ];
 
     if !disabled.contains("client_id") {
-        params.push(("client_id".to_string(), client_id));
+        params.push(("client_id".to_string(), config.client_id));
     }
     if !disabled.contains("client_secret") {
-        params.push(("client_secret".to_string(), client_secret));
+        params.push(("client_secret".to_string(), config.client_secret));
     }
 
-    if !scopes.is_empty() && !disabled.contains("scope") {
-        params.push(("scope".to_string(), scopes));
+    if !config.scopes.is_empty() && !disabled.contains("scope") {
+        params.push(("scope".to_string(), config.scopes));
     }
 
-    for (k, v) in extra_map {
+    for (k, v) in config.extra_params {
         if !disabled.contains(&k) {
             params.push((k, v));
         }
@@ -252,7 +255,7 @@ pub async fn authorize_client_credentials(
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&token_url)
+        .post(&config.token_url)
         .form(&params)
         .send()
         .await
@@ -276,16 +279,20 @@ fn generate_pkce() -> (String, String) {
 }
 
 pub async fn authorize_code_flow(
-    authorization_url: String,
-    token_url: String,
-    client_id: String,
-    client_secret: String,
-    scopes: String,
-    extra_map: HashMap<String, String>,
-    disabled: HashSet<String>,
-    disabled_token: HashSet<String>,
+    config: ResolvedClientConfig,
     cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<AuthResponse, String> {
+    let ResolvedClientConfig {
+        authorization_url,
+        token_url,
+        client_id,
+        client_secret,
+        scopes,
+        extra_params: extra_map,
+        disabled_params: disabled,
+        disabled_token_params: disabled_token,
+        ..
+    } = config;
     let state_param = uuid::Uuid::new_v4().to_string();
 
     let (code_verifier, code_challenge) = generate_pkce();
@@ -296,6 +303,8 @@ pub async fn authorize_code_flow(
         .await
         .map_err(|e| format!("Failed to bind callback server on port {}: {}", CALLBACK_PORT, e))?;
     log::info!("Auth code callback server on port {}", CALLBACK_PORT);
+
+    let send_state = !disabled.contains("state");
 
     let auth_url = {
         let mut query = form_urlencoded::Serializer::new(String::new());
@@ -308,7 +317,7 @@ pub async fn authorize_code_flow(
         if !disabled.contains("redirect_uri") {
             query.append_pair("redirect_uri", &redirect_uri);
         }
-        if !disabled.contains("state") {
+        if send_state {
             query.append_pair("state", &state_param);
         }
         if !scopes.is_empty() && !disabled.contains("scope") {
@@ -331,7 +340,7 @@ pub async fn authorize_code_flow(
     let (tx, rx) = tokio::sync::oneshot::channel();
     let callback_state = CallbackState {
         tx: Arc::new(Mutex::new(Some(tx))),
-        expected_state: state_param,
+        expected_state: if send_state { Some(state_param) } else { None },
         auth_url: auth_url.clone(),
     };
     let router = AxumRouter::new()
@@ -350,8 +359,8 @@ pub async fn authorize_code_flow(
     });
 
     let trampoline_url = format!("http://localhost:{}/start", CALLBACK_PORT);
-    open_chrome(&trampoline_url)?;
-    log::info!("Opened Chrome for authorization");
+    open_browser(&trampoline_url)?;
+    log::info!("Opened browser for authorization");
 
     let code = tokio::select! {
         result = rx => {
@@ -458,18 +467,21 @@ async fn callback_handler(
         let desc = params.error_description.unwrap_or_default();
         Err(format!("{}: {}", error, desc))
     } else if let Some(code) = params.code {
-        if params.state.as_deref() == Some(state.expected_state.as_str()) {
-            Ok(code)
-        } else {
-            Err("State parameter mismatch".to_string())
+        match &state.expected_state {
+            Some(expected) if params.state.as_deref() != Some(expected.as_str()) => {
+                Err("State parameter mismatch".to_string())
+            }
+            _ => Ok(code),
         }
     } else {
         Err("No code or error in callback".to_string())
     };
 
     let is_ok = result.is_ok();
-    if let Some(tx) = state.tx.lock().unwrap().take() {
-        let _ = tx.send(result);
+    if let Ok(mut guard) = state.tx.lock() {
+        if let Some(tx) = guard.take() {
+            let _ = tx.send(result);
+        }
     }
 
     if is_ok {
@@ -573,8 +585,7 @@ pub fn lookup_disabled_refresh_params(conn: &Connection, id: i64) -> Result<Hash
         |row| row.get(0),
     )
     .map_err(|e| e.to_string())?;
-    let map: HashMap<String, bool> = serde_json::from_str(&raw).unwrap_or_default();
-    Ok(map.into_iter().filter(|(_, v)| *v).map(|(k, _)| k).collect())
+    Ok(parse_disabled_set(&raw))
 }
 
 pub async fn refresh_token_flow(
@@ -613,15 +624,43 @@ pub async fn refresh_token_flow(
     build_auth_response(response).await
 }
 
-fn open_chrome(url: &str) -> Result<(), String> {
+#[cfg(target_os = "macos")]
+const CHROME_PATHS: &[&str] = &["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"];
+
+#[cfg(target_os = "windows")]
+const CHROME_PATHS: &[&str] = &[
+    "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
+    "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
+];
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+const CHROME_PATHS: &[&str] = &["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
+
+/// Prefer Chrome with an isolated profile and devtools (useful for inspecting the
+/// flow); fall back to the OS default browser when Chrome isn't available.
+fn open_browser(url: &str) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir().join("oauth-diag-chrome");
-    std::process::Command::new("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        .arg("--auto-open-devtools-for-tabs")
-        .arg(format!("--user-data-dir={}", tmp_dir.display()))
-        .arg("--no-first-run")
-        .arg("--no-default-browser-check")
-        .arg(url)
-        .spawn()
-        .map_err(|e| format!("Failed to open Chrome: {}", e))?;
-    Ok(())
+    for chrome in CHROME_PATHS {
+        let spawned = std::process::Command::new(chrome)
+            .arg("--auto-open-devtools-for-tabs")
+            .arg(format!("--user-data-dir={}", tmp_dir.display()))
+            .arg("--no-first-run")
+            .arg("--no-default-browser-check")
+            .arg(url)
+            .spawn();
+        if spawned.is_ok() {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    let fallback = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(target_os = "windows")]
+    let fallback = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    let fallback = std::process::Command::new("xdg-open").arg(url).spawn();
+
+    fallback
+        .map(|_| ())
+        .map_err(|e| format!("Failed to open a browser: {}", e))
 }

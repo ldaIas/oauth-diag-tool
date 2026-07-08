@@ -1,3 +1,12 @@
+/* Bundled locally so the app works offline and under a strict CSP */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -30,6 +39,31 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   flex: 1;
   gap: 24px;
   min-height: 0;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #3d1a1a;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  word-break: break-word;
+}
+
+.error-banner-dismiss {
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.error-banner-dismiss:hover {
+  color: var(--text);
 }
 
 .panel {

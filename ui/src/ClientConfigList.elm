@@ -2,13 +2,29 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ClientConfigList exposing (Action(..), AuthResult, ClientConfig, MetadataResult, Model, Msg(..), authResultDecoder, clientConfigDecoder, metadataResultDecoder, init, update, view)
+module ClientConfigList exposing
+    ( Action(..)
+    , AuthResult
+    , ClientConfig
+    , MetadataPayload
+    , MetadataResult
+    , Model
+    , Msg(..)
+    , authResultDecoder
+    , clientConfigDecoder
+    , encodeConfigFields
+    , init
+    , metadataResultDecoder
+    , update
+    , view
+    )
 
 import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes exposing (checked, class, type_)
 import Html.Events exposing (onClick)
 import Json.Decode as Decode
+import Json.Encode as Encode
 import Set exposing (Set)
 
 
@@ -16,7 +32,7 @@ import Set exposing (Set)
 
 
 type alias ClientConfig =
-    { id : String
+    { id : Int
     , name : String
     , issuerUrl : String
     , authorizationUrl : String
@@ -25,36 +41,51 @@ type alias ClientConfig =
     , clientSecret : String
     , scopes : String
     , grantType : String
-    , extraParams : String
-    , disabledParams : String
-    , disabledTokenParams : String
+    , extraParams : Dict String String
+    , disabledParams : Dict String Bool
+    , disabledTokenParams : Dict String Bool
     , scopesSupported : String
     , refreshToken : String
-    , disabledRefreshParams : String
+    , disabledRefreshParams : Dict String Bool
     }
 
 
-type alias MetadataResult =
-    { configId : String
-    , body : String
+type alias MetadataPayload =
+    { body : String
     , authorizationEndpoint : String
     , tokenEndpoint : String
     , scopesSupported : String
     }
 
 
-type alias AuthResult =
-    { configId : String
-    , statusCode : Int
+type alias MetadataResult =
+    { configId : Maybe Int
+    , outcome : Result String MetadataPayload
+    }
+
+
+type alias AuthSuccessData =
+    { statusCode : Int
     , headers : List ( String, String )
     , body : String
+    }
+
+
+type AuthOutcome
+    = AuthSuccess AuthSuccessData
+    | AuthFailure String
+
+
+type alias AuthResult =
+    { configId : Int
+    , outcome : AuthOutcome
     }
 
 
 type AuthState
     = Idle
     | Loading
-    | Done AuthResult
+    | Done AuthSuccessData
     | Error String
 
 
@@ -67,13 +98,13 @@ type MetadataState
 
 type alias Model =
     { configs : List ClientConfig
-    , authStates : Dict String AuthState
-    , expandedResults : Set String
-    , expandedParams : Set String
-    , expandedTokenParams : Set String
-    , expandedRefreshParams : Set String
-    , expandedMetadata : Set String
-    , metadataStates : Dict String MetadataState
+    , authStates : Dict Int AuthState
+    , expandedResults : Set Int
+    , expandedParams : Set Int
+    , expandedTokenParams : Set Int
+    , expandedRefreshParams : Set Int
+    , expandedMetadata : Set Int
+    , metadataStates : Dict Int MetadataState
     }
 
 
@@ -96,34 +127,34 @@ init =
 
 type Msg
     = OpenCreateForm
-    | DeleteConfig String
+    | DeleteConfig Int
     | EditConfig ClientConfig
-    | AuthorizeConfig String
-    | CancelAuthorize String
-    | ToggleResults String
-    | ToggleParam String String
-    | ToggleTokenParam String String
-    | ToggleParamsSection String
-    | ToggleTokenParamsSection String
-    | ToggleRefreshParam String String
-    | ToggleRefreshParamsSection String
-    | ToggleMetadataSection String
-    | FetchMetadata String String
-    | GotMetadataResult (Result Decode.Error MetadataResult)
-    | RefreshTokenConfig String
-    | GotAuthResult (Result Decode.Error AuthResult)
-    | GotClientConfigs (Result Decode.Error (List ClientConfig))
+    | AuthorizeConfig Int
+    | CancelAuthorize Int
+    | ToggleResults Int
+    | ToggleParam Int String
+    | ToggleTokenParam Int String
+    | ToggleRefreshParam Int String
+    | ToggleParamsSection Int
+    | ToggleTokenParamsSection Int
+    | ToggleRefreshParamsSection Int
+    | ToggleMetadataSection Int
+    | FetchMetadata Int String
+    | GotMetadataResult MetadataResult
+    | RefreshTokenConfig Int
+    | GotAuthResult AuthResult
+    | GotClientConfigs (List ClientConfig)
 
 
 type Action
     = RequestCreateForm
-    | RequestDeleteConfig String
+    | RequestDeleteConfig Int
     | RequestEditConfig ClientConfig
-    | RequestAuthorizeConfig String
-    | RequestCancelAuthorize String
+    | RequestAuthorizeConfig Int
+    | RequestCancelAuthorize Int
     | RequestUpdateConfig ClientConfig
-    | RequestRefreshToken String
-    | RequestFetchMetadata String String
+    | RequestRefreshToken Int
+    | RequestFetchMetadata Int String
     | NoAction
 
 
@@ -161,131 +192,34 @@ update msg model =
             )
 
         ToggleResults id ->
-            let
-                newExpanded =
-                    if Set.member id model.expandedResults then
-                        Set.remove id model.expandedResults
-
-                    else
-                        Set.insert id model.expandedResults
-            in
-            ( { model | expandedResults = newExpanded }, NoAction )
+            ( { model | expandedResults = toggleMember id model.expandedResults }, NoAction )
 
         ToggleParamsSection id ->
-            let
-                newExpanded =
-                    if Set.member id model.expandedParams then
-                        Set.remove id model.expandedParams
-
-                    else
-                        Set.insert id model.expandedParams
-            in
-            ( { model | expandedParams = newExpanded }, NoAction )
+            ( { model | expandedParams = toggleMember id model.expandedParams }, NoAction )
 
         ToggleTokenParamsSection id ->
-            let
-                newExpanded =
-                    if Set.member id model.expandedTokenParams then
-                        Set.remove id model.expandedTokenParams
-
-                    else
-                        Set.insert id model.expandedTokenParams
-            in
-            ( { model | expandedTokenParams = newExpanded }, NoAction )
-
-        ToggleParam configId paramName ->
-            let
-                updatedConfigs =
-                    List.map
-                        (\config ->
-                            if config.id == configId then
-                                { config | disabledParams = toggleDisabledParam paramName config.disabledParams }
-
-                            else
-                                config
-                        )
-                        model.configs
-
-                updatedConfig =
-                    List.filter (\c -> c.id == configId) updatedConfigs
-                        |> List.head
-            in
-            case updatedConfig of
-                Just config ->
-                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
-
-                Nothing ->
-                    ( model, NoAction )
-
-        ToggleTokenParam configId paramName ->
-            let
-                updatedConfigs =
-                    List.map
-                        (\config ->
-                            if config.id == configId then
-                                { config | disabledTokenParams = toggleDisabledParam paramName config.disabledTokenParams }
-
-                            else
-                                config
-                        )
-                        model.configs
-
-                updatedConfig =
-                    List.filter (\c -> c.id == configId) updatedConfigs
-                        |> List.head
-            in
-            case updatedConfig of
-                Just config ->
-                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
-
-                Nothing ->
-                    ( model, NoAction )
-
-        ToggleRefreshParam configId paramName ->
-            let
-                updatedConfigs =
-                    List.map
-                        (\config ->
-                            if config.id == configId then
-                                { config | disabledRefreshParams = toggleDisabledParam paramName config.disabledRefreshParams }
-
-                            else
-                                config
-                        )
-                        model.configs
-
-                updatedConfig =
-                    List.filter (\c -> c.id == configId) updatedConfigs
-                        |> List.head
-            in
-            case updatedConfig of
-                Just config ->
-                    ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
-
-                Nothing ->
-                    ( model, NoAction )
+            ( { model | expandedTokenParams = toggleMember id model.expandedTokenParams }, NoAction )
 
         ToggleRefreshParamsSection id ->
-            let
-                newExpanded =
-                    if Set.member id model.expandedRefreshParams then
-                        Set.remove id model.expandedRefreshParams
-
-                    else
-                        Set.insert id model.expandedRefreshParams
-            in
-            ( { model | expandedRefreshParams = newExpanded }, NoAction )
+            ( { model | expandedRefreshParams = toggleMember id model.expandedRefreshParams }, NoAction )
 
         ToggleMetadataSection id ->
-            let
-                newExpanded =
-                    if Set.member id model.expandedMetadata then
-                        Set.remove id model.expandedMetadata
+            ( { model | expandedMetadata = toggleMember id model.expandedMetadata }, NoAction )
 
-                    else
-                        Set.insert id model.expandedMetadata
-            in
-            ( { model | expandedMetadata = newExpanded }, NoAction )
+        ToggleParam configId paramName ->
+            updateConfigAndSave configId
+                (\c -> { c | disabledParams = toggleDisabled paramName c.disabledParams })
+                model
+
+        ToggleTokenParam configId paramName ->
+            updateConfigAndSave configId
+                (\c -> { c | disabledTokenParams = toggleDisabled paramName c.disabledTokenParams })
+                model
+
+        ToggleRefreshParam configId paramName ->
+            updateConfigAndSave configId
+                (\c -> { c | disabledRefreshParams = toggleDisabled paramName c.disabledRefreshParams })
+                model
 
         FetchMetadata configId issuerUrl ->
             ( { model
@@ -296,63 +230,44 @@ update msg model =
             )
 
         GotMetadataResult result ->
-            case result of
-                Ok metadata ->
-                    if String.isEmpty metadata.authorizationEndpoint && String.isEmpty metadata.tokenEndpoint then
-                        -- Error response: endpoints are empty, body contains the error
-                        ( { model | metadataStates = Dict.insert metadata.configId (MetadataError metadata.body) model.metadataStates }
-                        , NoAction
-                        )
-
-                    else
-                        let
-                            updatedConfigs =
-                                List.map
-                                    (\config ->
-                                        if config.id == metadata.configId then
-                                            { config
-                                                | authorizationUrl = metadata.authorizationEndpoint
-                                                , tokenUrl = metadata.tokenEndpoint
-                                                , scopesSupported = metadata.scopesSupported
-                                            }
-
-                                        else
-                                            config
-                                    )
-                                    model.configs
-
-                            updatedConfig =
-                                List.filter (\c -> c.id == metadata.configId) updatedConfigs
-                                    |> List.head
-                        in
-                        case updatedConfig of
-                            Just config ->
-                                ( { model
-                                    | configs = updatedConfigs
-                                    , metadataStates = Dict.insert metadata.configId (MetadataDone metadata.body) model.metadataStates
-                                  }
-                                , RequestUpdateConfig config
-                                )
-
-                            Nothing ->
-                                ( { model | metadataStates = Dict.insert metadata.configId (MetadataDone metadata.body) model.metadataStates }
-                                , NoAction
-                                )
-
-                Err _ ->
+            case result.configId of
+                Nothing ->
+                    -- Form-submission fetches are handled by Main
                     ( model, NoAction )
 
-        GotAuthResult result ->
-            case result of
-                Ok authResult ->
+                Just configId ->
+                    case result.outcome of
+                        Err err ->
+                            ( { model | metadataStates = Dict.insert configId (MetadataError err) model.metadataStates }
+                            , NoAction
+                            )
+
+                        Ok payload ->
+                            updateConfigAndSave configId
+                                (\c ->
+                                    { c
+                                        | authorizationUrl = payload.authorizationEndpoint
+                                        , tokenUrl = payload.tokenEndpoint
+                                        , scopesSupported = payload.scopesSupported
+                                    }
+                                )
+                                { model | metadataStates = Dict.insert configId (MetadataDone payload.body) model.metadataStates }
+
+        GotAuthResult authResult ->
+            case authResult.outcome of
+                AuthFailure err ->
+                    ( { model
+                        | authStates = Dict.insert authResult.configId (Error err) model.authStates
+                        , expandedResults = Set.insert authResult.configId model.expandedResults
+                      }
+                    , NoAction
+                    )
+
+                AuthSuccess data ->
                     let
                         maybeRefreshToken =
-                            case Decode.decodeString (Decode.field "refresh_token" Decode.string) authResult.body of
-                                Ok rt ->
-                                    Just rt
-
-                                Err _ ->
-                                    Nothing
+                            Decode.decodeString (Decode.field "refresh_token" Decode.string) data.body
+                                |> Result.toMaybe
 
                         updatedConfigs =
                             case maybeRefreshToken of
@@ -371,23 +286,52 @@ update msg model =
                                     model.configs
                     in
                     ( { model
-                        | authStates = Dict.insert authResult.configId (Done authResult) model.authStates
+                        | authStates = Dict.insert authResult.configId (Done data) model.authStates
                         , expandedResults = Set.insert authResult.configId model.expandedResults
                         , configs = updatedConfigs
                       }
                     , NoAction
                     )
 
-                Err _ ->
-                    ( model, NoAction )
+        GotClientConfigs configs ->
+            ( { model | configs = configs }, NoAction )
 
-        GotClientConfigs result ->
-            case result of
-                Ok configs ->
-                    ( { model | configs = configs }, NoAction )
 
-                Err _ ->
-                    ( model, NoAction )
+toggleMember : Int -> Set Int -> Set Int
+toggleMember id set =
+    if Set.member id set then
+        Set.remove id set
+
+    else
+        Set.insert id set
+
+
+{-| Apply an update to one config and request that it be persisted.
+-}
+updateConfigAndSave : Int -> (ClientConfig -> ClientConfig) -> Model -> ( Model, Action )
+updateConfigAndSave configId updateFn model =
+    let
+        updatedConfigs =
+            List.map
+                (\c ->
+                    if c.id == configId then
+                        updateFn c
+
+                    else
+                        c
+                )
+                model.configs
+
+        updatedConfig =
+            List.filter (\c -> c.id == configId) updatedConfigs
+                |> List.head
+    in
+    case updatedConfig of
+        Just config ->
+            ( { model | configs = updatedConfigs }, RequestUpdateConfig config )
+
+        Nothing ->
+            ( model, NoAction )
 
 
 
@@ -397,7 +341,7 @@ update msg model =
 clientConfigDecoder : Decode.Decoder ClientConfig
 clientConfigDecoder =
     Decode.map8 ClientConfig
-        (Decode.field "id" Decode.int |> Decode.map String.fromInt)
+        (Decode.field "id" Decode.int)
         (Decode.field "name" Decode.string)
         (Decode.field "issuerUrl" Decode.string)
         (Decode.field "authorizationUrl" Decode.string)
@@ -406,31 +350,62 @@ clientConfigDecoder =
         (Decode.field "clientSecret" Decode.string)
         (Decode.field "scopes" Decode.string)
         |> andMap (Decode.field "grantType" Decode.string)
-        |> andMap (Decode.field "extraParams" Decode.string)
-        |> andMap (Decode.field "disabledParams" Decode.string)
-        |> andMap (Decode.field "disabledTokenParams" Decode.string)
+        |> andMap (Decode.field "extraParams" (jsonStringDict Decode.string))
+        |> andMap (Decode.field "disabledParams" (jsonStringDict Decode.bool))
+        |> andMap (Decode.field "disabledTokenParams" (jsonStringDict Decode.bool))
         |> andMap (Decode.field "scopesSupported" Decode.string)
         |> andMap (Decode.field "refreshToken" Decode.string)
-        |> andMap (Decode.field "disabledRefreshParams" Decode.string)
+        |> andMap (Decode.field "disabledRefreshParams" (jsonStringDict Decode.bool))
+
+
+{-| The backend stores these maps as JSON text inside a string column; decode
+that string into a proper Dict at the boundary.
+-}
+jsonStringDict : Decode.Decoder a -> Decode.Decoder (Dict String a)
+jsonStringDict valueDecoder =
+    Decode.string
+        |> Decode.map
+            (\raw ->
+                if String.isEmpty raw then
+                    Dict.empty
+
+                else
+                    Decode.decodeString (Decode.dict valueDecoder) raw
+                        |> Result.withDefault Dict.empty
+            )
 
 
 metadataResultDecoder : Decode.Decoder MetadataResult
 metadataResultDecoder =
-    Decode.map5 MetadataResult
-        (Decode.field "configId" Decode.string)
-        (Decode.field "body" Decode.string)
-        (Decode.field "authorizationEndpoint" Decode.string)
-        (Decode.field "tokenEndpoint" Decode.string)
-        (Decode.field "scopesSupported" Decode.string)
+    Decode.map2 MetadataResult
+        (Decode.field "configId" (Decode.nullable Decode.int))
+        (Decode.oneOf
+            [ Decode.map Err (Decode.field "error" Decode.string)
+            , Decode.map Ok
+                (Decode.map4 MetadataPayload
+                    (Decode.field "body" Decode.string)
+                    (Decode.field "authorizationEndpoint" Decode.string)
+                    (Decode.field "tokenEndpoint" Decode.string)
+                    (Decode.field "scopesSupported" Decode.string)
+                )
+            ]
+        )
 
 
 authResultDecoder : Decode.Decoder AuthResult
 authResultDecoder =
-    Decode.map4 AuthResult
-        (Decode.field "configId" Decode.string)
-        (Decode.field "statusCode" Decode.int)
-        (Decode.field "headers" (Decode.list headerDecoder))
-        (Decode.field "body" Decode.string)
+    Decode.map2 AuthResult
+        (Decode.field "configId" Decode.int)
+        (Decode.oneOf
+            [ Decode.map AuthFailure (Decode.field "error" Decode.string)
+            , Decode.map AuthSuccess
+                (Decode.map3 AuthSuccessData
+                    (Decode.field "statusCode" Decode.int)
+                    (Decode.field "headers" (Decode.list headerDecoder))
+                    (Decode.field "body" Decode.string)
+                )
+            ]
+        )
 
 
 headerDecoder : Decode.Decoder ( String, String )
@@ -446,42 +421,78 @@ andMap =
 
 
 
+-- ENCODING
+
+
+{-| Encode the persistable fields of a config as the payload expected by the
+create/update Tauri commands. Works for any record with these fields, so the
+form module's output can be encoded with the same function.
+-}
+encodeConfigFields :
+    { r
+        | name : String
+        , issuerUrl : String
+        , authorizationUrl : String
+        , tokenUrl : String
+        , clientId : String
+        , clientSecret : String
+        , scopes : String
+        , grantType : String
+        , extraParams : Dict String String
+        , disabledParams : Dict String Bool
+        , disabledTokenParams : Dict String Bool
+        , scopesSupported : String
+        , disabledRefreshParams : Dict String Bool
+    }
+    -> List ( String, Encode.Value )
+encodeConfigFields c =
+    [ ( "name", Encode.string c.name )
+    , ( "issuerUrl", Encode.string c.issuerUrl )
+    , ( "authorizationUrl", Encode.string c.authorizationUrl )
+    , ( "tokenUrl", Encode.string c.tokenUrl )
+    , ( "clientId", Encode.string c.clientId )
+    , ( "clientSecret", Encode.string c.clientSecret )
+    , ( "scopes", Encode.string c.scopes )
+    , ( "grantType", Encode.string c.grantType )
+    , ( "extraParams", Encode.string (encodeExtraParams c.extraParams) )
+    , ( "disabledParams", Encode.string (encodeDisabledParams c.disabledParams) )
+    , ( "disabledTokenParams", Encode.string (encodeDisabledParams c.disabledTokenParams) )
+    , ( "scopesSupported", Encode.string c.scopesSupported )
+    , ( "disabledRefreshParams", Encode.string (encodeDisabledParams c.disabledRefreshParams) )
+    ]
+
+
+encodeExtraParams : Dict String String -> String
+encodeExtraParams params =
+    -- The backend treats the empty string as "no extra params"
+    if Dict.isEmpty params then
+        ""
+
+    else
+        Encode.encode 0 (Encode.dict identity Encode.string params)
+
+
+encodeDisabledParams : Dict String Bool -> String
+encodeDisabledParams params =
+    Encode.encode 0 (Encode.dict identity Encode.bool params)
+
+
+
 -- DISABLED PARAMS HELPERS
 
 
-isParamDisabled : String -> String -> Bool
+isParamDisabled : String -> Dict String Bool -> Bool
 isParamDisabled paramName disabledParams =
-    String.contains ("\"" ++ paramName ++ "\":true") disabledParams
+    Dict.get paramName disabledParams == Just True
 
 
-toggleDisabledParam : String -> String -> String
-toggleDisabledParam paramName disabledParams =
-    let
-        decoded : Dict String Bool
-        decoded =
-            case Decode.decodeString (Decode.dict Decode.bool) disabledParams of
-                Ok dict ->
-                    dict
-
-                Err _ ->
-                    Dict.empty
-
-        updated =
-            if Dict.member paramName decoded then
-                Dict.remove paramName decoded
-
-            else
-                Dict.insert paramName True decoded
-
-        entries =
-            Dict.toList updated
-                |> List.map (\( k, _ ) -> "\"" ++ k ++ "\":true")
-    in
-    if List.isEmpty entries then
-        "{}"
+toggleDisabled : String -> Dict String Bool -> Dict String Bool
+toggleDisabled paramName disabledParams =
+    if Dict.member paramName disabledParams then
+        Dict.remove paramName disabledParams
 
     else
-        "{" ++ String.join "," entries ++ "}"
+        Dict.insert paramName True disabledParams
 
 
 
@@ -504,17 +515,17 @@ viewBody callbackUrl model =
 
     else
         div [ class "server-list" ]
-            (List.map (viewConfigCard callbackUrl model.authStates model.expandedResults model.expandedParams model.expandedTokenParams model.expandedRefreshParams model.expandedMetadata model.metadataStates) model.configs)
+            (List.map (viewConfigCard callbackUrl model) model.configs)
 
 
-viewConfigCard : String -> Dict String AuthState -> Set String -> Set String -> Set String -> Set String -> Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
-viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTokenParams expandedRefreshParams expandedMetadata metadataStates config =
+viewConfigCard : String -> Model -> ClientConfig -> Html Msg
+viewConfigCard callbackUrl model config =
     let
         state =
-            Dict.get config.id authStates |> Maybe.withDefault Idle
+            Dict.get config.id model.authStates |> Maybe.withDefault Idle
 
         isExpanded =
-            Set.member config.id expandedResults
+            Set.member config.id model.expandedResults
 
         hasResult =
             case state of
@@ -559,11 +570,11 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
 
               else
                 viewDetail "Scopes" config.scopes
-            , if String.isEmpty config.extraParams then
+            , if Dict.isEmpty config.extraParams then
                 text ""
 
               else
-                viewDetail "Extra Params" config.extraParams
+                viewDetail "Extra Params" (extraParamsSummary config.extraParams)
             , if String.isEmpty config.scopesSupported then
                 text ""
 
@@ -572,18 +583,18 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
             ]
         , if config.grantType == "authorization_code" then
             div []
-                [ viewAuthorizeParamToggles expandedParams config
-                , viewTokenParamToggles expandedTokenParams config
+                [ viewAuthorizeParamToggles model.expandedParams config
+                , viewTokenParamToggles model.expandedTokenParams config
                 ]
 
           else
-            viewParamToggles expandedParams config
+            viewParamToggles model.expandedParams config
         , if not (String.isEmpty config.refreshToken) then
-            viewRefreshParamToggles expandedRefreshParams config
+            viewRefreshParamToggles model.expandedRefreshParams config
 
           else
             text ""
-        , viewMetadataSection expandedMetadata metadataStates config
+        , viewMetadataSection model.expandedMetadata model.metadataStates config
         , if hasResult then
             div [ class "results-section" ]
                 [ span [ class "expandable-toggle", onClick (ToggleResults config.id) ]
@@ -600,7 +611,14 @@ viewConfigCard callbackUrl authStates expandedResults expandedParams expandedTok
         ]
 
 
-viewMetadataSection : Set String -> Dict String MetadataState -> ClientConfig -> Html Msg
+extraParamsSummary : Dict String String -> String
+extraParamsSummary params =
+    Dict.toList params
+        |> List.map (\( k, v ) -> k ++ "=" ++ v)
+        |> String.join ", "
+
+
+viewMetadataSection : Set Int -> Dict Int MetadataState -> ClientConfig -> Html Msg
 viewMetadataSection expandedMetadata metadataStates config =
     let
         isExpanded =
@@ -655,166 +673,105 @@ viewMetadataState state =
                 ]
 
 
-viewParamToggles : Set String -> ClientConfig -> Html Msg
+viewParamToggles : Set Int -> ClientConfig -> Html Msg
 viewParamToggles expandedParams config =
     let
-        isExpanded =
-            Set.member config.id expandedParams
-
-        chevron =
-            if isExpanded then
-                "\u{25BC}"
-
-            else
-                "\u{25B6}"
-
         standardParams =
             [ "client_id", "client_secret", "scope" ]
 
-        authCodeParams =
-            if config.grantType == "authorization_code" then
-                [ "response_type", "redirect_uri", "state" ]
-
-            else
-                []
-
-        pkceParams =
-            if config.grantType == "authorization_code" then
-                [ "code_challenge", "code_challenge_method", "code_verifier" ]
-
-            else
-                []
-
-        extraParamKeys =
-            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
-                Ok dict ->
-                    Dict.keys dict
-
-                Err _ ->
-                    []
-
         allParams =
-            standardParams ++ authCodeParams ++ pkceParams ++ extraParamKeys
+            standardParams ++ Dict.keys config.extraParams
     in
-    div [ class "param-toggles" ]
-        [ span [ class "expandable-toggle", onClick (ToggleParamsSection config.id) ]
-            [ text (chevron ++ " Send Parameters") ]
-        , if isExpanded then
-            div [ class "param-toggle-list" ]
-                (List.map (viewParamToggle ToggleParam config.id config.disabledParams) allParams)
+    viewToggleSection
+        { sectionTitle = "Send Parameters"
+        , isExpanded = Set.member config.id expandedParams
+        , toggleSectionMsg = ToggleParamsSection config.id
+        , toggleParamMsg = ToggleParam
+        , configId = config.id
+        , disabledParams = config.disabledParams
+        , params = allParams
+        }
 
-          else
-            text ""
-        ]
 
-
-viewAuthorizeParamToggles : Set String -> ClientConfig -> Html Msg
+viewAuthorizeParamToggles : Set Int -> ClientConfig -> Html Msg
 viewAuthorizeParamToggles expandedParams config =
     let
-        isExpanded =
-            Set.member config.id expandedParams
-
-        chevron =
-            if isExpanded then
-                "\u{25BC}"
-
-            else
-                "\u{25B6}"
-
         authorizeParams =
             [ "response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method" ]
-
-        extraParamKeys =
-            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
-                Ok dict ->
-                    Dict.keys dict
-
-                Err _ ->
-                    []
-
-        allParams =
-            authorizeParams ++ extraParamKeys
     in
-    div [ class "param-toggles" ]
-        [ span [ class "expandable-toggle", onClick (ToggleParamsSection config.id) ]
-            [ text (chevron ++ " Authorize Parameters") ]
-        , if isExpanded then
-            div [ class "param-toggle-list" ]
-                (List.map (viewParamToggle ToggleParam config.id config.disabledParams) allParams)
+    viewToggleSection
+        { sectionTitle = "Authorize Parameters"
+        , isExpanded = Set.member config.id expandedParams
+        , toggleSectionMsg = ToggleParamsSection config.id
+        , toggleParamMsg = ToggleParam
+        , configId = config.id
+        , disabledParams = config.disabledParams
+        , params = authorizeParams ++ Dict.keys config.extraParams
+        }
 
-          else
-            text ""
-        ]
 
-
-viewTokenParamToggles : Set String -> ClientConfig -> Html Msg
+viewTokenParamToggles : Set Int -> ClientConfig -> Html Msg
 viewTokenParamToggles expandedTokenParams config =
     let
-        isExpanded =
-            Set.member config.id expandedTokenParams
-
-        chevron =
-            if isExpanded then
-                "\u{25BC}"
-
-            else
-                "\u{25B6}"
-
         tokenParams =
             [ "client_id", "client_secret", "redirect_uri", "code_verifier" ]
-
-        extraParamKeys =
-            case Decode.decodeString (Decode.dict Decode.string) config.extraParams of
-                Ok dict ->
-                    Dict.keys dict
-
-                Err _ ->
-                    []
-
-        allParams =
-            tokenParams ++ extraParamKeys
     in
-    div [ class "param-toggles" ]
-        [ span [ class "expandable-toggle", onClick (ToggleTokenParamsSection config.id) ]
-            [ text (chevron ++ " Token Parameters") ]
-        , if isExpanded then
-            div [ class "param-toggle-list" ]
-                (List.map (viewParamToggle ToggleTokenParam config.id config.disabledTokenParams) allParams)
+    viewToggleSection
+        { sectionTitle = "Token Parameters"
+        , isExpanded = Set.member config.id expandedTokenParams
+        , toggleSectionMsg = ToggleTokenParamsSection config.id
+        , toggleParamMsg = ToggleTokenParam
+        , configId = config.id
+        , disabledParams = config.disabledTokenParams
+        , params = tokenParams ++ Dict.keys config.extraParams
+        }
 
-          else
-            text ""
-        ]
 
-
-viewRefreshParamToggles : Set String -> ClientConfig -> Html Msg
+viewRefreshParamToggles : Set Int -> ClientConfig -> Html Msg
 viewRefreshParamToggles expandedRefreshParams config =
-    let
-        isExpanded =
-            Set.member config.id expandedRefreshParams
+    viewToggleSection
+        { sectionTitle = "Refresh Token Parameters"
+        , isExpanded = Set.member config.id expandedRefreshParams
+        , toggleSectionMsg = ToggleRefreshParamsSection config.id
+        , toggleParamMsg = ToggleRefreshParam
+        , configId = config.id
+        , disabledParams = config.disabledRefreshParams
+        , params = [ "grant_type", "refresh_token", "client_id", "client_secret", "scope" ]
+        }
 
+
+viewToggleSection :
+    { sectionTitle : String
+    , isExpanded : Bool
+    , toggleSectionMsg : Msg
+    , toggleParamMsg : Int -> String -> Msg
+    , configId : Int
+    , disabledParams : Dict String Bool
+    , params : List String
+    }
+    -> Html Msg
+viewToggleSection cfg =
+    let
         chevron =
-            if isExpanded then
+            if cfg.isExpanded then
                 "\u{25BC}"
 
             else
                 "\u{25B6}"
-
-        refreshParams =
-            [ "grant_type", "refresh_token", "client_id", "client_secret", "scope" ]
     in
     div [ class "param-toggles" ]
-        [ span [ class "expandable-toggle", onClick (ToggleRefreshParamsSection config.id) ]
-            [ text (chevron ++ " Refresh Token Parameters") ]
-        , if isExpanded then
+        [ span [ class "expandable-toggle", onClick cfg.toggleSectionMsg ]
+            [ text (chevron ++ " " ++ cfg.sectionTitle) ]
+        , if cfg.isExpanded then
             div [ class "param-toggle-list" ]
-                (List.map (viewParamToggle ToggleRefreshParam config.id config.disabledRefreshParams) refreshParams)
+                (List.map (viewParamToggle cfg.toggleParamMsg cfg.configId cfg.disabledParams) cfg.params)
 
           else
             text ""
         ]
 
 
-viewParamToggle : (String -> String -> Msg) -> String -> String -> String -> Html Msg
+viewParamToggle : (Int -> String -> Msg) -> Int -> Dict String Bool -> String -> Html Msg
 viewParamToggle toggleMsg configId disabledParams paramName =
     let
         disabled =

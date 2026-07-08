@@ -2,12 +2,13 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, update, view)
+module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, toConfigFields, update, view)
 
+import ClientConfigList exposing (ClientConfig)
+import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes exposing (checked, class, placeholder, selected, type_, value)
 import Html.Events exposing (onClick, onInput)
-import Json.Decode as Decode
 
 
 -- MODEL
@@ -20,7 +21,7 @@ type alias ExtraParam =
 
 
 type alias Model =
-    { editingId : Maybe String
+    { editingId : Maybe Int
     , name : String
     , issuerUrl : String
     , authorizationUrl : String
@@ -30,8 +31,10 @@ type alias Model =
     , scopes : String
     , grantType : String
     , extraParams : List ExtraParam
-    , disabledParams : String
-    , disabledTokenParams : String
+    , disabledParams : Dict String Bool
+    , disabledTokenParams : Dict String Bool
+    , scopesSupported : String
+    , disabledRefreshParams : Dict String Bool
     , useServerMetadata : Bool
     }
 
@@ -48,60 +51,85 @@ init =
     , scopes = ""
     , grantType = "authorization_code"
     , extraParams = []
-    , disabledParams = "{}"
-    , disabledTokenParams = "{}"
+    , disabledParams = Dict.empty
+    , disabledTokenParams = Dict.empty
+    , scopesSupported = ""
+    , disabledRefreshParams = Dict.empty
     , useServerMetadata = False
     }
 
 
 initFromImport : { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String } -> Model
 initFromImport data =
-    { editingId = Nothing
-    , name = data.name
-    , issuerUrl = data.issuerUrl
-    , authorizationUrl = data.authorizationUrl
-    , tokenUrl = data.tokenUrl
-    , clientId = data.clientId
-    , clientSecret = data.clientSecret
-    , scopes = ""
-    , grantType = "authorization_code"
-    , extraParams = []
-    , disabledParams = "{}"
-    , disabledTokenParams = "{}"
+    { init
+        | name = data.name
+        , issuerUrl = data.issuerUrl
+        , authorizationUrl = data.authorizationUrl
+        , tokenUrl = data.tokenUrl
+        , clientId = data.clientId
+        , clientSecret = data.clientSecret
+    }
+
+
+initFromEdit : ClientConfig -> Model
+initFromEdit config =
+    { editingId = Just config.id
+    , name = config.name
+    , issuerUrl = config.issuerUrl
+    , authorizationUrl = config.authorizationUrl
+    , tokenUrl = config.tokenUrl
+    , clientId = config.clientId
+    , clientSecret = config.clientSecret
+    , scopes = config.scopes
+    , grantType = config.grantType
+    , extraParams = Dict.toList config.extraParams |> List.map (\( k, v ) -> { key = k, value = v })
+    , disabledParams = config.disabledParams
+    , disabledTokenParams = config.disabledTokenParams
+    , scopesSupported = config.scopesSupported
+    , disabledRefreshParams = config.disabledRefreshParams
     , useServerMetadata = False
     }
 
 
-initFromEdit : { id : String, name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String, scopes : String, grantType : String, extraParams : String, disabledParams : String, disabledTokenParams : String } -> Model
-initFromEdit data =
-    { editingId = Just data.id
-    , name = data.name
-    , issuerUrl = data.issuerUrl
-    , authorizationUrl = data.authorizationUrl
-    , tokenUrl = data.tokenUrl
-    , clientId = data.clientId
-    , clientSecret = data.clientSecret
-    , scopes = data.scopes
-    , grantType = data.grantType
-    , extraParams = parseExtraParams data.extraParams
-    , disabledParams = data.disabledParams
-    , disabledTokenParams = data.disabledTokenParams
-    , useServerMetadata = False
+{-| Convert the form state into the canonical field record accepted by
+`ClientConfigList.encodeConfigFields`.
+-}
+toConfigFields :
+    Model
+    ->
+        { name : String
+        , issuerUrl : String
+        , authorizationUrl : String
+        , tokenUrl : String
+        , clientId : String
+        , clientSecret : String
+        , scopes : String
+        , grantType : String
+        , extraParams : Dict String String
+        , disabledParams : Dict String Bool
+        , disabledTokenParams : Dict String Bool
+        , scopesSupported : String
+        , disabledRefreshParams : Dict String Bool
+        }
+toConfigFields model =
+    { name = model.name
+    , issuerUrl = model.issuerUrl
+    , authorizationUrl = model.authorizationUrl
+    , tokenUrl = model.tokenUrl
+    , clientId = model.clientId
+    , clientSecret = model.clientSecret
+    , scopes = model.scopes
+    , grantType = model.grantType
+    , extraParams =
+        model.extraParams
+            |> List.filter (\p -> not (String.isEmpty p.key))
+            |> List.map (\p -> ( p.key, p.value ))
+            |> Dict.fromList
+    , disabledParams = model.disabledParams
+    , disabledTokenParams = model.disabledTokenParams
+    , scopesSupported = model.scopesSupported
+    , disabledRefreshParams = model.disabledRefreshParams
     }
-
-
-parseExtraParams : String -> List ExtraParam
-parseExtraParams str =
-    if String.isEmpty str then
-        []
-
-    else
-        case Decode.decodeString (Decode.keyValuePairs Decode.string) str of
-            Ok pairs ->
-                List.map (\( k, v ) -> { key = k, value = v }) pairs
-
-            Err _ ->
-                []
 
 
 
@@ -206,22 +234,6 @@ updateAt idx fn list =
         list
 
 
-extraParamsToJson : List ExtraParam -> String
-extraParamsToJson params =
-    let
-        nonEmpty =
-            List.filter (\p -> not (String.isEmpty p.key)) params
-
-        pairs =
-            List.map (\p -> "\"" ++ p.key ++ "\":\"" ++ p.value ++ "\"") nonEmpty
-    in
-    if List.isEmpty pairs then
-        ""
-
-    else
-        "{" ++ String.join "," pairs ++ "}"
-
-
 
 -- VIEW
 
@@ -307,8 +319,6 @@ viewGrantType current =
         , Html.select [ class "form-input form-select", onInput SetGrantType ]
             [ option [ value "authorization_code", selected (current == "authorization_code") ] [ text "Authorization Code" ]
             , option [ value "client_credentials", selected (current == "client_credentials") ] [ text "Client Credentials" ]
-            , option [ value "implicit", selected (current == "implicit") ] [ text "Implicit" ]
-            , option [ value "password", selected (current == "password") ] [ text "Password" ]
             ]
         ]
 

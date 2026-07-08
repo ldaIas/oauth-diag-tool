@@ -3,8 +3,8 @@ name = "oauth-diagnostic-tool"
 version = "0.0.6"
 description = "Tool for going through the auth server and client side of OAuth flows"
 authors = ["Sam Sovereign"]
-license = "Apache 2.0"
-repository = ""
+license = "Apache-2.0"
+repository = "https://github.com/ldaIas/oauth-diag-tool"
 edition = "2021"
 rust-version = "1.77.2"
 
@@ -26,7 +26,7 @@ tauri-plugin-log = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rand = "0.8"
 axum = "0.7"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "time", "sync", "macros"] }
 uuid = { version = "1", features = ["v4"] }
 base64 = "0.22"
 form_urlencoded = "1.2"

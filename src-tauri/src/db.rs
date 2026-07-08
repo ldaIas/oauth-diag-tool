@@ -49,6 +49,8 @@ const SCHEMA: &str = "
     );
 ";
 
+// Version 2 was never shipped; the gap in numbering is intentional and must be kept
+// so that already-migrated databases don't re-run anything.
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_params TEXT NOT NULL DEFAULT '{}';"),
     (3, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_token_params TEXT NOT NULL DEFAULT '{}';"),
@@ -60,7 +62,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_refresh_params TEXT NOT NULL DEFAULT '{}';"),
 ];
 
-const LATEST_VERSION: i64 = 9;
+const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
 
 fn table_exists(conn: &Connection, name: &str) -> Result<bool> {
     let count: i64 = conn.query_row(

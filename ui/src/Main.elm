@@ -14,8 +14,8 @@ import Json.Decode as Decode
 import Json.Encode as Encode
 import Process
 import ServerForm
-import Task
 import ServerList
+import Task
 
 
 
@@ -64,6 +64,9 @@ port stopServer : Encode.Value -> Cmd msg
 port updateServerSettings : Encode.Value -> Cmd msg
 
 
+port serverSettingsSaved : (Decode.Value -> msg) -> Sub msg
+
+
 port authorizeClient : Encode.Value -> Cmd msg
 
 
@@ -91,6 +94,9 @@ port receiveServerMetadata : (Decode.Value -> msg) -> Sub msg
 port receiveResourceAccess : (Decode.Value -> msg) -> Sub msg
 
 
+port notifyError : (Decode.Value -> msg) -> Sub msg
+
+
 
 -- MODEL
 
@@ -114,7 +120,7 @@ type alias Model =
     , leftCollapsed : Bool
     , rightCollapsed : Bool
     , pendingFormSubmit : Maybe ClientConfigForm.Model
-    , pendingSaveSettings : Maybe String
+    , lastError : Maybe String
     }
 
 
@@ -128,7 +134,7 @@ init _ =
       , leftCollapsed = False
       , rightCollapsed = False
       , pendingFormSubmit = Nothing
-      , pendingSaveSettings = Nothing
+      , lastError = Nothing
       }
     , Cmd.batch
         [ requestServerConfigs ()
@@ -149,6 +155,9 @@ type Msg
     | ClientConfigFormMsg ClientConfigForm.Msg
     | GotCallbackUrl String
     | GotServerMetadata (Result Decode.Error ClientConfigList.MetadataResult)
+    | SettingsSavedAck Int
+    | BackendError String
+    | DismissError
     | ToggleLeftPanel
     | ToggleRightPanel
 
@@ -161,79 +170,7 @@ update msg model =
                 ( newServerList, action ) =
                     ServerList.update subMsg model.serverList
             in
-            case action of
-                ServerList.RequestCreateForm port_ ->
-                    ( { model
-                        | serverList = newServerList
-                        , leftPage = ServerCreateFormPage (ServerForm.init port_)
-                      }
-                    , Cmd.none
-                    )
-
-                ServerList.RequestDeleteServer id ->
-                    ( { model | serverList = newServerList }
-                    , deleteServerConfig (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ServerList.RequestAddClient serverId ->
-                    ( { model | serverList = newServerList }
-                    , addClientToServer (Encode.object [ ( "authServerId", Encode.string serverId ) ])
-                    )
-
-                ServerList.RequestDeleteClient clientId ->
-                    ( { model | serverList = newServerList }
-                    , deleteClient (Encode.object [ ( "id", Encode.string clientId ) ])
-                    )
-
-                ServerList.RequestImportClient data ->
-                    ( { model
-                        | serverList = newServerList
-                        , rightPage = ClientConfigCreateFormPage (ClientConfigForm.initFromImport data)
-                      }
-                    , Cmd.none
-                    )
-
-                ServerList.RequestStartServer id ->
-                    ( { model | serverList = newServerList }
-                    , startServer (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ServerList.RequestStopServer id ->
-                    ( { model | serverList = newServerList }
-                    , stopServer (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ServerList.RequestSaveSettings settings ->
-                    ( { model | serverList = newServerList, pendingSaveSettings = Just settings.id }
-                    , updateServerSettings
-                        (Encode.object
-                            [ ( "id", Encode.string settings.id )
-                            , ( "redirectUrlOverride", Encode.string settings.redirectUrlOverride )
-                            , ( "accessTokenExpiry", Encode.int settings.accessTokenExpiry )
-                            , ( "refreshTokenExpiry", Encode.int settings.refreshTokenExpiry )
-                            ]
-                        )
-                    )
-
-                ServerList.NoAction ->
-                    case model.pendingSaveSettings of
-                        Just savedId ->
-                            let
-                                ( confirmedList, _ ) =
-                                    ServerList.update (ServerList.SettingsSaved savedId) newServerList
-                            in
-                            ( { model
-                                | serverList = confirmedList
-                                , pendingSaveSettings = Nothing
-                              }
-                            , Process.sleep 2000
-                                |> Task.perform (\_ -> ServerListMsg (ServerList.ClearSettingsSaved savedId))
-                            )
-
-                        Nothing ->
-                            ( { model | serverList = newServerList }
-                            , Cmd.none
-                            )
+            applyServerListAction { model | serverList = newServerList } action
 
         ServerFormMsg subMsg ->
             case model.leftPage of
@@ -272,95 +209,7 @@ update msg model =
                 ( newConfigList, action ) =
                     ClientConfigList.update subMsg model.clientConfigList
             in
-            case action of
-                ClientConfigList.RequestCreateForm ->
-                    ( { model
-                        | clientConfigList = newConfigList
-                        , rightPage = ClientConfigCreateFormPage ClientConfigForm.init
-                      }
-                    , Cmd.none
-                    )
-
-                ClientConfigList.RequestDeleteConfig id ->
-                    ( { model | clientConfigList = newConfigList }
-                    , deleteClientConfig (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ClientConfigList.RequestEditConfig config ->
-                    ( { model
-                        | clientConfigList = newConfigList
-                        , rightPage =
-                            ClientConfigCreateFormPage
-                                (ClientConfigForm.initFromEdit
-                                    { id = config.id
-                                    , name = config.name
-                                    , issuerUrl = config.issuerUrl
-                                    , authorizationUrl = config.authorizationUrl
-                                    , tokenUrl = config.tokenUrl
-                                    , clientId = config.clientId
-                                    , clientSecret = config.clientSecret
-                                    , scopes = config.scopes
-                                    , grantType = config.grantType
-                                    , extraParams = config.extraParams
-                                    , disabledParams = config.disabledParams
-                                    , disabledTokenParams = config.disabledTokenParams
-                                    }
-                                )
-                      }
-                    , Cmd.none
-                    )
-
-                ClientConfigList.RequestAuthorizeConfig id ->
-                    ( { model | clientConfigList = newConfigList }
-                    , authorizeClient (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ClientConfigList.RequestCancelAuthorize id ->
-                    ( { model | clientConfigList = newConfigList }
-                    , cancelAuthorization (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ClientConfigList.RequestUpdateConfig config ->
-                    ( { model | clientConfigList = newConfigList }
-                    , updateClientConfig
-                        (Encode.object
-                            [ ( "id", Encode.string config.id )
-                            , ( "name", Encode.string config.name )
-                            , ( "issuerUrl", Encode.string config.issuerUrl )
-                            , ( "authorizationUrl", Encode.string config.authorizationUrl )
-                            , ( "tokenUrl", Encode.string config.tokenUrl )
-                            , ( "clientId", Encode.string config.clientId )
-                            , ( "clientSecret", Encode.string config.clientSecret )
-                            , ( "scopes", Encode.string config.scopes )
-                            , ( "grantType", Encode.string config.grantType )
-                            , ( "extraParams", Encode.string config.extraParams )
-                            , ( "disabledParams", Encode.string config.disabledParams )
-                            , ( "disabledTokenParams", Encode.string config.disabledTokenParams )
-                            , ( "scopesSupported", Encode.string config.scopesSupported )
-                            , ( "disabledRefreshParams", Encode.string config.disabledRefreshParams )
-                            ]
-                        )
-                    )
-
-                ClientConfigList.RequestRefreshToken id ->
-                    ( { model | clientConfigList = newConfigList }
-                    , refreshToken (Encode.object [ ( "id", Encode.string id ) ])
-                    )
-
-                ClientConfigList.RequestFetchMetadata configId issuerUrl ->
-                    ( { model | clientConfigList = newConfigList }
-                    , fetchServerMetadata
-                        (Encode.object
-                            [ ( "issuerUrl", Encode.string issuerUrl )
-                            , ( "configId", Encode.string configId )
-                            ]
-                        )
-                    )
-
-                ClientConfigList.NoAction ->
-                    ( { model | clientConfigList = newConfigList }
-                    , Cmd.none
-                    )
+            applyConfigListAction { model | clientConfigList = newConfigList } action
 
         GotCallbackUrl url ->
             ( { model | callbackUrl = url }, Cmd.none )
@@ -371,114 +220,40 @@ update msg model =
         ToggleRightPanel ->
             ( { model | rightCollapsed = not model.rightCollapsed }, Cmd.none )
 
-        GotServerMetadata result ->
-            case result of
-                Ok metadata ->
-                    if String.isEmpty metadata.configId then
-                        -- Form submission flow
-                        if String.isEmpty metadata.authorizationEndpoint && String.isEmpty metadata.tokenEndpoint then
-                            -- Metadata fetch failed: re-show form
-                            case model.pendingFormSubmit of
-                                Just pendingForm ->
-                                    ( { model
-                                        | pendingFormSubmit = Nothing
-                                        , rightPage = ClientConfigCreateFormPage pendingForm
-                                      }
-                                    , Cmd.none
-                                    )
+        SettingsSavedAck serverId ->
+            let
+                ( newServerList, _ ) =
+                    ServerList.update (ServerList.SettingsSaved serverId) model.serverList
+            in
+            ( { model | serverList = newServerList }
+            , Process.sleep 2000
+                |> Task.perform (\_ -> ServerListMsg (ServerList.ClearSettingsSaved serverId))
+            )
 
-                                Nothing ->
-                                    ( model, Cmd.none )
+        BackendError err ->
+            ( { model | lastError = Just err }, Cmd.none )
 
-                        else
-                            -- Metadata fetched, now save the config
-                            case model.pendingFormSubmit of
-                                Just pendingForm ->
-                                    let
-                                        formWithMetadata =
-                                            { pendingForm
-                                                | authorizationUrl = metadata.authorizationEndpoint
-                                                , tokenUrl = metadata.tokenEndpoint
-                                            }
+        DismissError ->
+            ( { model | lastError = Nothing }, Cmd.none )
 
-                                        fields =
-                                            [ ( "name", Encode.string formWithMetadata.name )
-                                            , ( "issuerUrl", Encode.string formWithMetadata.issuerUrl )
-                                            , ( "authorizationUrl", Encode.string formWithMetadata.authorizationUrl )
-                                            , ( "tokenUrl", Encode.string formWithMetadata.tokenUrl )
-                                            , ( "clientId", Encode.string formWithMetadata.clientId )
-                                            , ( "clientSecret", Encode.string formWithMetadata.clientSecret )
-                                            , ( "scopes", Encode.string formWithMetadata.scopes )
-                                            , ( "grantType", Encode.string formWithMetadata.grantType )
-                                            , ( "extraParams", Encode.string (extraParamsToJson formWithMetadata.extraParams) )
-                                            , ( "disabledParams", Encode.string formWithMetadata.disabledParams )
-                                            , ( "disabledTokenParams", Encode.string formWithMetadata.disabledTokenParams )
-                                            , ( "scopesSupported", Encode.string metadata.scopesSupported )
-                                            , ( "disabledRefreshParams", Encode.string "{}" )
-                                            ]
+        GotServerMetadata (Err decodeError) ->
+            ( { model | lastError = Just ("Failed to decode metadata response: " ++ Decode.errorToString decodeError) }
+            , Cmd.none
+            )
 
-                                        cmd =
-                                            case formWithMetadata.editingId of
-                                                Just id ->
-                                                    updateClientConfig
-                                                        (Encode.object (( "id", Encode.string id ) :: fields))
+        GotServerMetadata (Ok metadata) ->
+            case metadata.configId of
+                Nothing ->
+                    -- Metadata was fetched as part of a form submission
+                    handleFormMetadata metadata.outcome model
 
-                                                Nothing ->
-                                                    createClientConfig
-                                                        (Encode.object fields)
-                                    in
-                                    ( { model | pendingFormSubmit = Nothing, rightPage = ClientConfigListPage }
-                                    , cmd
-                                    )
-
-                                Nothing ->
-                                    ( model, Cmd.none )
-
-                    else
-                        -- List refresh flow: forward to ClientConfigList
-                        let
-                            ( newConfigList, action ) =
-                                ClientConfigList.update (ClientConfigList.GotMetadataResult (Ok metadata)) model.clientConfigList
-                        in
-                        case action of
-                            ClientConfigList.RequestUpdateConfig config ->
-                                ( { model | clientConfigList = newConfigList }
-                                , updateClientConfig
-                                    (Encode.object
-                                        [ ( "id", Encode.string config.id )
-                                        , ( "name", Encode.string config.name )
-                                        , ( "issuerUrl", Encode.string config.issuerUrl )
-                                        , ( "authorizationUrl", Encode.string config.authorizationUrl )
-                                        , ( "tokenUrl", Encode.string config.tokenUrl )
-                                        , ( "clientId", Encode.string config.clientId )
-                                        , ( "clientSecret", Encode.string config.clientSecret )
-                                        , ( "scopes", Encode.string config.scopes )
-                                        , ( "grantType", Encode.string config.grantType )
-                                        , ( "extraParams", Encode.string config.extraParams )
-                                        , ( "disabledParams", Encode.string config.disabledParams )
-                                        , ( "disabledTokenParams", Encode.string config.disabledTokenParams )
-                                        , ( "scopesSupported", Encode.string config.scopesSupported )
-                                        , ( "disabledRefreshParams", Encode.string config.disabledRefreshParams )
-                                        ]
-                                    )
-                                )
-
-                            _ ->
-                                ( { model | clientConfigList = newConfigList }, Cmd.none )
-
-                Err _ ->
-                    case model.pendingFormSubmit of
-                        Just pendingForm ->
-                            -- Metadata fetch failed during form submission: re-show form
-                            ( { model
-                                | pendingFormSubmit = Nothing
-                                , rightPage = ClientConfigCreateFormPage pendingForm
-                              }
-                            , Cmd.none
-                            )
-
-                        Nothing ->
-                            ( model, Cmd.none )
+                Just _ ->
+                    -- Refresh-metadata flow on an existing config card
+                    let
+                        ( newConfigList, action ) =
+                            ClientConfigList.update (ClientConfigList.GotMetadataResult metadata) model.clientConfigList
+                    in
+                    applyConfigListAction { model | clientConfigList = newConfigList } action
 
         ClientConfigFormMsg subMsg ->
             case model.rightPage of
@@ -490,7 +265,7 @@ update msg model =
                     case action of
                         Just ClientConfigForm.SubmitForm ->
                             if newForm.useServerMetadata then
-                                -- Fetch metadata first, then save
+                                -- Fetch metadata first; the config is saved when it arrives
                                 ( { model
                                     | pendingFormSubmit = Just newForm
                                     , rightPage = ClientConfigListPage
@@ -498,41 +273,15 @@ update msg model =
                                 , fetchServerMetadata
                                     (Encode.object
                                         [ ( "issuerUrl", Encode.string newForm.issuerUrl )
-                                        , ( "configId", Encode.string "" )
+                                        , ( "configId", Encode.null )
                                         ]
                                     )
                                 )
 
                             else
-                                let
-                                    fields =
-                                        [ ( "name", Encode.string newForm.name )
-                                        , ( "issuerUrl", Encode.string newForm.issuerUrl )
-                                        , ( "authorizationUrl", Encode.string newForm.authorizationUrl )
-                                        , ( "tokenUrl", Encode.string newForm.tokenUrl )
-                                        , ( "clientId", Encode.string newForm.clientId )
-                                        , ( "clientSecret", Encode.string newForm.clientSecret )
-                                        , ( "scopes", Encode.string newForm.scopes )
-                                        , ( "grantType", Encode.string newForm.grantType )
-                                        , ( "extraParams", Encode.string (extraParamsToJson newForm.extraParams) )
-                                        , ( "disabledParams", Encode.string newForm.disabledParams )
-                                        , ( "disabledTokenParams", Encode.string newForm.disabledTokenParams )
-                                        , ( "scopesSupported", Encode.string "" )
-                                        , ( "disabledRefreshParams", Encode.string "{}" )
-                                        ]
-
-                                    cmd =
-                                        case newForm.editingId of
-                                            Just id ->
-                                                updateClientConfig
-                                                    (Encode.object (( "id", Encode.string id ) :: fields))
-
-                                            Nothing ->
-                                                createClientConfig
-                                                    (Encode.object fields)
-                                in
                                 ( { model | rightPage = ClientConfigListPage }
-                                , cmd
+                                , saveConfigCmd newForm.editingId
+                                    (ClientConfigList.encodeConfigFields (ClientConfigForm.toConfigFields newForm))
                                 )
 
                         Just ClientConfigForm.CancelForm ->
@@ -549,20 +298,146 @@ update msg model =
                     ( model, Cmd.none )
 
 
-extraParamsToJson : List { key : String, value : String } -> String
-extraParamsToJson params =
-    let
-        nonEmpty =
-            List.filter (\p -> not (String.isEmpty p.key)) params
+applyServerListAction : Model -> ServerList.Action -> ( Model, Cmd Msg )
+applyServerListAction model action =
+    case action of
+        ServerList.RequestCreateForm port_ ->
+            ( { model | leftPage = ServerCreateFormPage (ServerForm.init port_) }
+            , Cmd.none
+            )
 
-        pairs =
-            List.map (\p -> "\"" ++ p.key ++ "\":\"" ++ p.value ++ "\"") nonEmpty
-    in
-    if List.isEmpty pairs then
-        ""
+        ServerList.RequestDeleteServer id ->
+            ( model, deleteServerConfig (Encode.object [ ( "id", Encode.int id ) ]) )
 
-    else
-        "{" ++ String.join "," pairs ++ "}"
+        ServerList.RequestAddClient serverId ->
+            ( model, addClientToServer (Encode.object [ ( "authServerId", Encode.int serverId ) ]) )
+
+        ServerList.RequestDeleteClient clientId ->
+            ( model, deleteClient (Encode.object [ ( "id", Encode.int clientId ) ]) )
+
+        ServerList.RequestImportClient data ->
+            ( { model | rightPage = ClientConfigCreateFormPage (ClientConfigForm.initFromImport data) }
+            , Cmd.none
+            )
+
+        ServerList.RequestStartServer id ->
+            ( model, startServer (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ServerList.RequestStopServer id ->
+            ( model, stopServer (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ServerList.RequestSaveSettings settings ->
+            ( model
+            , updateServerSettings
+                (Encode.object
+                    [ ( "id", Encode.int settings.id )
+                    , ( "redirectUrlOverride", Encode.string settings.redirectUrlOverride )
+                    , ( "accessTokenExpiry", Encode.int settings.accessTokenExpiry )
+                    , ( "refreshTokenExpiry", Encode.int settings.refreshTokenExpiry )
+                    ]
+                )
+            )
+
+        ServerList.NoAction ->
+            ( model, Cmd.none )
+
+
+applyConfigListAction : Model -> ClientConfigList.Action -> ( Model, Cmd Msg )
+applyConfigListAction model action =
+    case action of
+        ClientConfigList.RequestCreateForm ->
+            ( { model | rightPage = ClientConfigCreateFormPage ClientConfigForm.init }
+            , Cmd.none
+            )
+
+        ClientConfigList.RequestDeleteConfig id ->
+            ( model, deleteClientConfig (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ClientConfigList.RequestEditConfig config ->
+            ( { model | rightPage = ClientConfigCreateFormPage (ClientConfigForm.initFromEdit config) }
+            , Cmd.none
+            )
+
+        ClientConfigList.RequestAuthorizeConfig id ->
+            ( model, authorizeClient (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ClientConfigList.RequestCancelAuthorize id ->
+            ( model, cancelAuthorization (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ClientConfigList.RequestUpdateConfig config ->
+            ( model, saveConfigCmd (Just config.id) (ClientConfigList.encodeConfigFields config) )
+
+        ClientConfigList.RequestRefreshToken id ->
+            ( model, refreshToken (Encode.object [ ( "id", Encode.int id ) ]) )
+
+        ClientConfigList.RequestFetchMetadata configId issuerUrl ->
+            ( model
+            , fetchServerMetadata
+                (Encode.object
+                    [ ( "issuerUrl", Encode.string issuerUrl )
+                    , ( "configId", Encode.int configId )
+                    ]
+                )
+            )
+
+        ClientConfigList.NoAction ->
+            ( model, Cmd.none )
+
+
+{-| Save a config: create when there is no id, update when there is one.
+Accepts either pre-encoded fields from `ClientConfigList.encodeConfigFields`.
+-}
+saveConfigCmd : Maybe Int -> List ( String, Encode.Value ) -> Cmd Msg
+saveConfigCmd editingId fields =
+    case editingId of
+        Just id ->
+            updateClientConfig
+                (Encode.object
+                    [ ( "id", Encode.int id )
+                    , ( "config", Encode.object fields )
+                    ]
+                )
+
+        Nothing ->
+            createClientConfig (Encode.object [ ( "config", Encode.object fields ) ])
+
+
+{-| Complete a form submission once its metadata fetch resolves.
+-}
+handleFormMetadata : Result String ClientConfigList.MetadataPayload -> Model -> ( Model, Cmd Msg )
+handleFormMetadata outcome model =
+    case model.pendingFormSubmit of
+        Nothing ->
+            ( model, Cmd.none )
+
+        Just pendingForm ->
+            case outcome of
+                Err err ->
+                    -- Re-show the form so nothing typed is lost
+                    ( { model
+                        | pendingFormSubmit = Nothing
+                        , rightPage = ClientConfigCreateFormPage pendingForm
+                        , lastError = Just ("Metadata fetch failed: " ++ err)
+                      }
+                    , Cmd.none
+                    )
+
+                Ok payload ->
+                    let
+                        base =
+                            ClientConfigForm.toConfigFields pendingForm
+
+                        fields =
+                            ClientConfigList.encodeConfigFields
+                                { base
+                                    | authorizationUrl = payload.authorizationEndpoint
+                                    , tokenUrl = payload.tokenEndpoint
+                                    , scopesSupported = payload.scopesSupported
+                                }
+                    in
+                    ( { model | pendingFormSubmit = Nothing, rightPage = ClientConfigListPage }
+                    , saveConfigCmd pendingForm.editingId fields
+                    )
 
 
 
@@ -573,6 +448,7 @@ view : Model -> Html Msg
 view model =
     div [ class "shell" ]
         [ viewHeader
+        , viewErrorBanner model.lastError
         , div [ class "split-layout" ]
             [ if model.leftCollapsed then
                 div [ class "panel-collapsed panel-collapsed-left", onClick ToggleLeftPanel, title "Expand OAuth Servers" ]
@@ -622,6 +498,19 @@ view model =
         ]
 
 
+viewErrorBanner : Maybe String -> Html Msg
+viewErrorBanner lastError =
+    case lastError of
+        Nothing ->
+            text ""
+
+        Just err ->
+            div [ class "error-banner" ]
+                [ span [ class "error-banner-text" ] [ text err ]
+                , span [ class "error-banner-dismiss", onClick DismissError, title "Dismiss" ] [ text "✕" ]
+                ]
+
+
 viewLeftPage : Model -> Html Msg
 viewLeftPage model =
     case model.leftPage of
@@ -654,35 +543,39 @@ viewHeader =
 -- SUBSCRIPTIONS
 
 
+{-| Decode an incoming port value, reporting failures via the error banner
+instead of dropping them silently.
+-}
+decodeOr : Decode.Decoder a -> (a -> Msg) -> String -> Decode.Value -> Msg
+decodeOr decoder toMsg context val =
+    case Decode.decodeValue decoder val of
+        Ok decoded ->
+            toMsg decoded
+
+        Err err ->
+            BackendError (context ++ ": " ++ Decode.errorToString err)
+
+
 subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
         [ receiveServerConfigs
-            (\val ->
-                ServerListMsg
-                    (ServerList.GotServerConfigs
-                        (Decode.decodeValue (Decode.list ServerList.serverConfigDecoder) val)
-                    )
+            (decodeOr (Decode.list ServerList.serverConfigDecoder)
+                (ServerListMsg << ServerList.GotServerConfigs)
+                "Failed to decode server configs"
             )
         , receiveClientConfigs
-            (\val ->
-                ClientConfigListMsg
-                    (ClientConfigList.GotClientConfigs
-                        (Decode.decodeValue (Decode.list ClientConfigList.clientConfigDecoder) val)
-                    )
+            (decodeOr (Decode.list ClientConfigList.clientConfigDecoder)
+                (ClientConfigListMsg << ClientConfigList.GotClientConfigs)
+                "Failed to decode client configs"
             )
         , receiveAuthResult
-            (\val ->
-                ClientConfigListMsg
-                    (ClientConfigList.GotAuthResult
-                        (Decode.decodeValue ClientConfigList.authResultDecoder val)
-                    )
+            (decodeOr ClientConfigList.authResultDecoder
+                (ClientConfigListMsg << ClientConfigList.GotAuthResult)
+                "Failed to decode authorization result"
             )
         , receiveServerMetadata
-            (\val ->
-                GotServerMetadata
-                    (Decode.decodeValue ClientConfigList.metadataResultDecoder val)
-            )
+            (\val -> GotServerMetadata (Decode.decodeValue ClientConfigList.metadataResultDecoder val))
         , receiveCallbackUrl
             (\val ->
                 case Decode.decodeValue Decode.string val of
@@ -693,10 +586,17 @@ subscriptions _ =
                         GotCallbackUrl ""
             )
         , receiveResourceAccess
+            (decodeOr ServerList.resourceAccessDecoder
+                (ServerListMsg << ServerList.GotResourceAccess)
+                "Failed to decode resource access event"
+            )
+        , serverSettingsSaved
+            (decodeOr Decode.int SettingsSavedAck "Failed to decode settings-saved ack")
+        , notifyError
             (\val ->
-                ServerListMsg
-                    (ServerList.GotResourceAccess
-                        (Decode.decodeValue ServerList.resourceAccessDecoder val)
+                BackendError
+                    (Decode.decodeValue Decode.string val
+                        |> Result.withDefault "Unknown backend error"
                     )
             )
         ]

@@ -28,6 +28,9 @@ pub struct ServerConfig {
     pub config_name: String,
     pub auth_server_url: String,
     pub token_url: String,
+    /// Port derived from auth_server_url; 0 when the URL cannot be parsed
+    pub port: u16,
+    pub issuer_url: String,
     pub running: bool,
     pub clients: Vec<OAuthClient>,
     pub redirect_url_override: String,
@@ -96,11 +99,15 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
         })?;
     let mut configs: Vec<ServerConfig> = stmt
         .query_map([], |row| {
+            let auth_server_url: String = row.get(2)?;
+            let port = extract_port(&auth_server_url).unwrap_or(0);
             Ok(ServerConfig {
                 id: row.get(0)?,
                 config_name: row.get(1)?,
-                auth_server_url: row.get(2)?,
+                auth_server_url,
                 token_url: row.get(3)?,
+                port,
+                issuer_url: format!("http://localhost:{}", port),
                 running: false,
                 clients: Vec::new(),
                 redirect_url_override: row.get(4)?,
@@ -240,7 +247,7 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         .map_err(|e| e.to_string())?
     };
 
-    let port = extract_port(&auth_server_url);
+    let port = extract_port(&auth_server_url)?;
     let issuer_url = format!("http://localhost:{}", port);
 
     // Generate a random signing key for JWT tokens
@@ -264,16 +271,15 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
     let router = oauth_server::build_router(server_state);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
 
+    // Bind before spawning so a port conflict is reported to the caller
+    // instead of being logged from inside the task after "success".
+    let listener = running
+        .runtime
+        .block_on(tokio::net::TcpListener::bind(("127.0.0.1", port)))
+        .map_err(|e| format!("Failed to bind 127.0.0.1:{}: {}", port, e))?;
+
     let handle = running.runtime.spawn(async move {
-        let addr = format!("0.0.0.0:{}", port);
-        log::info!("Starting OAuth server on {}", addr);
-        let listener = match tokio::net::TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(e) => {
-                log::error!("Failed to bind to {}: {}", addr, e);
-                return;
-            }
-        };
+        log::info!("Starting OAuth server on 127.0.0.1:{}", port);
         if let Err(e) = axum::serve(listener, router)
             .with_graceful_shutdown(async { let _ = shutdown_rx.await; })
             .await
@@ -301,10 +307,15 @@ pub fn stop(running: &mut RunningServers, id: i64) -> Result<(), String> {
     }
 }
 
-fn extract_port(url: &str) -> u16 {
-    url.replace("http://localhost:", "")
-        .split('/')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(9500)
+fn extract_port(url: &str) -> Result<u16, String> {
+    let rest = url
+        .strip_prefix("http://")
+        .or_else(|| url.strip_prefix("https://"))
+        .ok_or_else(|| format!("Server URL '{}' must start with http:// or https://", url))?;
+    let host_port = rest.split('/').next().unwrap_or("");
+    let (_, port) = host_port
+        .rsplit_once(':')
+        .ok_or_else(|| format!("Server URL '{}' does not contain a port", url))?;
+    port.parse()
+        .map_err(|e| format!("Invalid port in server URL '{}': {}", url, e))
 }

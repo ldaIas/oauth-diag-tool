@@ -4,6 +4,7 @@
 
 module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, ResourceAccess, init, resourceAccessDecoder, serverConfigDecoder, update, view)
 
+import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes exposing (class, disabled, placeholder, type_, value)
 import Html.Events exposing (onClick, onInput)
@@ -15,14 +16,14 @@ import Set exposing (Set)
 
 
 type alias Client =
-    { id : String
+    { id : Int
     , clientId : String
     , clientSecret : String
     }
 
 
 type alias ResourceAccess =
-    { serverId : String
+    { serverId : Int
     , clientId : String
     , status : Int
     , error : Maybe String
@@ -31,7 +32,7 @@ type alias ResourceAccess =
 
 
 type alias OAuthServer =
-    { id : String
+    { id : Int
     , name : String
     , issuerUrl : String
     , authorizationUrl : String
@@ -55,10 +56,10 @@ type alias SettingsEdit =
 
 type alias Model =
     { servers : List OAuthServer
-    , expandedClients : Set String
-    , expandedSettings : Set String
-    , settingsEdits : List ( String, SettingsEdit )
-    , savedSettings : Set String
+    , expandedClients : Set Int
+    , expandedSettings : Set Int
+    , settingsEdits : Dict Int SettingsEdit
+    , savedSettings : Set Int
     }
 
 
@@ -67,7 +68,7 @@ init =
     { servers = []
     , expandedClients = Set.empty
     , expandedSettings = Set.empty
-    , settingsEdits = []
+    , settingsEdits = Dict.empty
     , savedSettings = Set.empty
     }
 
@@ -78,33 +79,33 @@ init =
 
 type Msg
     = OpenCreateForm
-    | DeleteServer String
-    | AddClient String
-    | DeleteClient String
+    | DeleteServer Int
+    | AddClient Int
+    | DeleteClient Int
     | ImportClient OAuthServer Client
-    | StartServer String
-    | StopServer String
-    | ToggleClients String
-    | ToggleSettings String
-    | EditRedirectOverride String String
-    | EditAccessTokenExpiry String String
-    | EditRefreshTokenExpiry String String
-    | SaveSettings String
-    | SettingsSaved String
-    | ClearSettingsSaved String
-    | GotServerConfigs (Result Decode.Error (List OAuthServer))
-    | GotResourceAccess (Result Decode.Error ResourceAccess)
+    | StartServer Int
+    | StopServer Int
+    | ToggleClients Int
+    | ToggleSettings Int
+    | EditRedirectOverride Int String
+    | EditAccessTokenExpiry Int String
+    | EditRefreshTokenExpiry Int String
+    | SaveSettings Int
+    | SettingsSaved Int
+    | ClearSettingsSaved Int
+    | GotServerConfigs (List OAuthServer)
+    | GotResourceAccess ResourceAccess
 
 
 type Action
     = RequestCreateForm Int
-    | RequestDeleteServer String
-    | RequestAddClient String
-    | RequestDeleteClient String
+    | RequestDeleteServer Int
+    | RequestAddClient Int
+    | RequestDeleteClient Int
     | RequestImportClient { name : String, issuerUrl : String, authorizationUrl : String, tokenUrl : String, clientId : String, clientSecret : String }
-    | RequestStartServer String
-    | RequestStopServer String
-    | RequestSaveSettings { id : String, redirectUrlOverride : String, accessTokenExpiry : Int, refreshTokenExpiry : Int }
+    | RequestStartServer Int
+    | RequestStopServer Int
+    | RequestSaveSettings { id : Int, redirectUrlOverride : String, accessTokenExpiry : Int, refreshTokenExpiry : Int }
     | NoAction
 
 
@@ -144,45 +145,37 @@ update msg model =
             ( model, RequestStopServer id )
 
         ToggleClients serverId ->
-            let
-                newExpanded =
-                    if Set.member serverId model.expandedClients then
-                        Set.remove serverId model.expandedClients
-
-                    else
-                        Set.insert serverId model.expandedClients
-            in
-            ( { model | expandedClients = newExpanded }, NoAction )
+            ( { model | expandedClients = toggleMember serverId model.expandedClients }, NoAction )
 
         ToggleSettings serverId ->
             let
-                newExpanded =
-                    if Set.member serverId model.expandedSettings then
-                        Set.remove serverId model.expandedSettings
+                expanding =
+                    not (Set.member serverId model.expandedSettings)
 
-                    else
-                        Set.insert serverId model.expandedSettings
-
-                -- Initialize edit state from server data if expanding
+                -- Initialize edit state from server data when expanding
                 newEdits =
-                    if not (Set.member serverId model.expandedSettings) then
+                    if expanding then
                         case List.filter (\s -> s.id == serverId) model.servers of
                             server :: _ ->
-                                ( serverId
-                                , { redirectUrlOverride = server.redirectUrlOverride
-                                  , accessTokenExpiry = String.fromInt server.accessTokenExpiry
-                                  , refreshTokenExpiry = String.fromInt server.refreshTokenExpiry
-                                  }
-                                )
-                                    :: List.filter (\( id, _ ) -> id /= serverId) model.settingsEdits
+                                Dict.insert serverId
+                                    { redirectUrlOverride = server.redirectUrlOverride
+                                    , accessTokenExpiry = String.fromInt server.accessTokenExpiry
+                                    , refreshTokenExpiry = String.fromInt server.refreshTokenExpiry
+                                    }
+                                    model.settingsEdits
 
                             [] ->
                                 model.settingsEdits
 
                     else
-                        List.filter (\( id, _ ) -> id /= serverId) model.settingsEdits
+                        Dict.remove serverId model.settingsEdits
             in
-            ( { model | expandedSettings = newExpanded, settingsEdits = newEdits }, NoAction )
+            ( { model
+                | expandedSettings = toggleMember serverId model.expandedSettings
+                , settingsEdits = newEdits
+              }
+            , NoAction
+            )
 
         EditRedirectOverride serverId val ->
             ( { model | settingsEdits = updateSettingsEdit serverId (\e -> { e | redirectUrlOverride = val }) model.settingsEdits }, NoAction )
@@ -200,7 +193,7 @@ update msg model =
             ( { model | savedSettings = Set.remove serverId model.savedSettings }, NoAction )
 
         SaveSettings serverId ->
-            case getSettingsEdit serverId model.settingsEdits of
+            case Dict.get serverId model.settingsEdits of
                 Just edit ->
                     ( model
                     , RequestSaveSettings
@@ -214,65 +207,42 @@ update msg model =
                 Nothing ->
                     ( model, NoAction )
 
-        GotServerConfigs result ->
-            case result of
-                Ok configs ->
-                    ( { model | servers = configs }, NoAction )
+        GotServerConfigs configs ->
+            ( { model | servers = configs }, NoAction )
 
-                Err _ ->
-                    ( model, NoAction )
+        GotResourceAccess access ->
+            ( { model
+                | servers =
+                    List.map
+                        (\s ->
+                            if s.id == access.serverId then
+                                { s | lastResourceAccess = Just access }
 
-        GotResourceAccess result ->
-            case result of
-                Ok access ->
-                    ( { model
-                        | servers =
-                            List.map
-                                (\s ->
-                                    if s.id == access.serverId then
-                                        { s | lastResourceAccess = Just access }
-
-                                    else
-                                        s
-                                )
-                                model.servers
-                      }
-                    , NoAction
-                    )
-
-                Err _ ->
-                    ( model, NoAction )
+                            else
+                                s
+                        )
+                        model.servers
+              }
+            , NoAction
+            )
 
 
-updateSettingsEdit : String -> (SettingsEdit -> SettingsEdit) -> List ( String, SettingsEdit ) -> List ( String, SettingsEdit )
+toggleMember : Int -> Set Int -> Set Int
+toggleMember id set =
+    if Set.member id set then
+        Set.remove id set
+
+    else
+        Set.insert id set
+
+
+updateSettingsEdit : Int -> (SettingsEdit -> SettingsEdit) -> Dict Int SettingsEdit -> Dict Int SettingsEdit
 updateSettingsEdit serverId fn edits =
-    List.map
-        (\( id, edit ) ->
-            if id == serverId then
-                ( id, fn edit )
-
-            else
-                ( id, edit )
-        )
-        edits
-
-
-getSettingsEdit : String -> List ( String, SettingsEdit ) -> Maybe SettingsEdit
-getSettingsEdit serverId edits =
-    List.filterMap
-        (\( id, edit ) ->
-            if id == serverId then
-                Just edit
-
-            else
-                Nothing
-        )
-        edits
-        |> List.head
+    Dict.update serverId (Maybe.map fn) edits
 
 
 
--- PORTS / HELPERS
+-- HELPERS
 
 
 nextPort : Model -> Int
@@ -303,7 +273,7 @@ findAvailable candidate used =
 clientDecoder : Decode.Decoder Client
 clientDecoder =
     Decode.map3 Client
-        (Decode.field "id" Decode.int |> Decode.map String.fromInt)
+        (Decode.field "id" Decode.int)
         (Decode.field "clientId" Decode.string)
         (Decode.field "clientSecret" Decode.string)
 
@@ -311,7 +281,7 @@ clientDecoder =
 resourceAccessDecoder : Decode.Decoder ResourceAccess
 resourceAccessDecoder =
     Decode.map5 ResourceAccess
-        (Decode.field "serverId" (Decode.int |> Decode.map String.fromInt))
+        (Decode.field "serverId" Decode.int)
         (Decode.field "clientId" Decode.string)
         (Decode.field "status" Decode.int)
         (Decode.field "error" (Decode.nullable Decode.string))
@@ -324,14 +294,10 @@ serverConfigDecoder =
         |> Decode.andThen
             (\id ->
                 Decode.map8
-                    (\name authUrl tokUrl running clients redirectOverride accessExpiry refreshExpiry ->
-                        let
-                            port_ =
-                                extractPort authUrl
-                        in
-                        { id = String.fromInt id
+                    (\name issuer authUrl tokUrl port_ running clients ( redirectOverride, accessExpiry, refreshExpiry ) ->
+                        { id = id
                         , name = name
-                        , issuerUrl = "http://localhost:" ++ String.fromInt port_
+                        , issuerUrl = issuer
                         , authorizationUrl = authUrl
                         , tokenEndpoint = tokUrl
                         , port_ = port_
@@ -344,24 +310,18 @@ serverConfigDecoder =
                         }
                     )
                     (Decode.field "configName" Decode.string)
+                    (Decode.field "issuerUrl" Decode.string)
                     (Decode.field "authServerUrl" Decode.string)
                     (Decode.field "tokenUrl" Decode.string)
+                    (Decode.field "port" Decode.int)
                     (Decode.field "running" Decode.bool)
                     (Decode.field "clients" (Decode.list clientDecoder))
-                    (Decode.field "redirectUrlOverride" Decode.string)
-                    (Decode.field "accessTokenExpiry" Decode.int)
-                    (Decode.field "refreshTokenExpiry" Decode.int)
+                    (Decode.map3 (\a b c -> ( a, b, c ))
+                        (Decode.field "redirectUrlOverride" Decode.string)
+                        (Decode.field "accessTokenExpiry" Decode.int)
+                        (Decode.field "refreshTokenExpiry" Decode.int)
+                    )
             )
-
-
-extractPort : String -> Int
-extractPort url =
-    url
-        |> String.replace "http://localhost:" ""
-        |> String.split "/"
-        |> List.head
-        |> Maybe.andThen String.toInt
-        |> Maybe.withDefault 9500
 
 
 
@@ -468,9 +428,9 @@ viewServerCard model server =
         ]
 
 
-viewSettingsForm : String -> Set String -> List ( String, SettingsEdit ) -> Html Msg
+viewSettingsForm : Int -> Set Int -> Dict Int SettingsEdit -> Html Msg
 viewSettingsForm serverId saved edits =
-    case getSettingsEdit serverId edits of
+    case Dict.get serverId edits of
         Just edit ->
             let
                 isSaved =
@@ -542,7 +502,13 @@ viewResourceSection server =
         , case server.lastResourceAccess of
             Just access ->
                 div [ class "resource-details" ]
-                    [ viewDetail "Last Client" (if String.isEmpty access.clientId then "—" else access.clientId)
+                    [ viewDetail "Last Client"
+                        (if String.isEmpty access.clientId then
+                            "—"
+
+                         else
+                            access.clientId
+                        )
                     , viewDetail "Status"
                         (if access.status == 200 then
                             "200 OK"
@@ -580,7 +546,7 @@ viewClientCard : OAuthServer -> Client -> Html Msg
 viewClientCard server client =
     div [ class "client-card" ]
         [ div [ class "client-card-header" ]
-            [ span [ class "client-label" ] [ text ("Client " ++ client.id) ]
+            [ span [ class "client-label" ] [ text ("Client " ++ String.fromInt client.id) ]
             , div [ class "client-card-actions" ]
                 [ button [ class "btn-import", onClick (ImportClient server client) ] [ text "Import" ]
                 , button [ class "btn-delete", onClick (DeleteClient client.id) ] [ text "\u{1F5D1}" ]
