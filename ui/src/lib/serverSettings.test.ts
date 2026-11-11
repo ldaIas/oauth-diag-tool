@@ -16,18 +16,20 @@ describe("parseIntOr", () => {
 
 describe("toServerSettings", () => {
   test("uses the default expiries when the drafts do not parse", () => {
-    expect(toServerSettings({ redirectUrlOverride: "http://x", accessTokenExpiry: "", refreshTokenExpiry: "x" })).toEqual({
+    expect(toServerSettings({ redirectUrlOverride: "http://x", accessTokenExpiry: "", refreshTokenExpiry: "x", userBased: false })).toEqual({
       redirectUrlOverride: "http://x",
       accessTokenExpiry: 3600,
       refreshTokenExpiry: 86400,
+      userBased: false,
     });
   });
 
   test("keeps parsed expiries", () => {
-    expect(toServerSettings({ redirectUrlOverride: "", accessTokenExpiry: "60", refreshTokenExpiry: "120" })).toEqual({
+    expect(toServerSettings({ redirectUrlOverride: "", accessTokenExpiry: "60", refreshTokenExpiry: "120", userBased: true })).toEqual({
       redirectUrlOverride: "",
       accessTokenExpiry: 60,
       refreshTokenExpiry: 120,
+      userBased: true,
     });
   });
 });

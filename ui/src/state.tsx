@@ -40,6 +40,39 @@ function keepServers(
   return Object.fromEntries(Object.entries(access).filter(([id]) => ids.has(Number(id))));
 }
 
+interface Listenable<T> {
+  listen(handler: (event: { payload: T }) => void): Promise<() => void>;
+}
+
+/** Subscribes to a typed event and returns the cleanup; listen failures go to `onError`. */
+function listenTo<T>(
+  name: string,
+  event: Listenable<T>,
+  handler: (payload: T) => void,
+  onError: (message: string) => void,
+): () => void {
+  let disposed = false;
+  let unlisten: (() => void) | undefined;
+  event
+    .listen((e) => handler(e.payload))
+    .then((stop) => {
+      // The effect may have been torn down before listen() resolved.
+      if (disposed) {
+        stop();
+      } else {
+        unlisten = stop;
+      }
+    })
+    .catch((err: unknown) => {
+      console.error(`${name} listen failed:`, err);
+      onError(`${name} listener: ${String(err)}`);
+    });
+  return () => {
+    disposed = true;
+    unlisten?.();
+  };
+}
+
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [servers, setServers] = useState<ServerConfig[]>([]);
   const [clientConfigs, setClientConfigs] = useState<ParsedClientConfig[]>([]);
@@ -73,29 +106,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [api]);
 
   useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    events.resourceAccess
-      .listen((event) => {
-        setResourceAccess((prev) => ({ ...prev, [event.payload.serverId]: event.payload }));
-      })
-      .then((stop) => {
-        // The effect may have been torn down before listen() resolved.
-        if (disposed) {
-          stop();
-        } else {
-          unlisten = stop;
-        }
-      })
-      .catch((err: unknown) => {
-        console.error("resource-access listen failed:", err);
-        setLastError(`resource-access listener: ${String(err)}`);
-      });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
+    return listenTo("resource-access", events.resourceAccess, (payload) => {
+      setResourceAccess((prev) => ({ ...prev, [payload.serverId]: payload }));
+    }, setLastError);
   }, []);
+
+  useEffect(() => {
+    return listenTo("server-users-changed", events.serverUsersChanged, () => void api.loadServerConfigs(), setLastError);
+  }, [api]);
 
   const value: AppState = {
     servers,

@@ -17,7 +17,8 @@ const SCHEMA: &str = "
         token_url TEXT NOT NULL,
         redirect_url_override TEXT NOT NULL DEFAULT '',
         access_token_expiry INTEGER NOT NULL DEFAULT 3600,
-        refresh_token_expiry INTEGER NOT NULL DEFAULT 86400
+        refresh_token_expiry INTEGER NOT NULL DEFAULT 86400,
+        user_based INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS auth_server_clients (
@@ -27,6 +28,16 @@ const SCHEMA: &str = "
         auth_server_id INTEGER NOT NULL,
         FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
         UNIQUE (auth_server_id, client_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS server_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        auth_server_id INTEGER NOT NULL,
+        username TEXT NOT NULL,
+        password TEXT NOT NULL,
+        user_data TEXT NOT NULL,
+        FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
+        UNIQUE (auth_server_id, username)
     );
 
     CREATE TABLE IF NOT EXISTS oauth_client_configs (
@@ -64,6 +75,16 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, "ALTER TABLE server_configs ADD COLUMN refresh_token_expiry INTEGER NOT NULL DEFAULT 86400;"),
     (8, "ALTER TABLE oauth_client_configs ADD COLUMN refresh_token TEXT NOT NULL DEFAULT '';"),
     (9, "ALTER TABLE oauth_client_configs ADD COLUMN disabled_refresh_params TEXT NOT NULL DEFAULT '{}';"),
+    (10, "ALTER TABLE server_configs ADD COLUMN user_based INTEGER NOT NULL DEFAULT 0;"),
+    (11, "CREATE TABLE IF NOT EXISTS server_users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        auth_server_id INTEGER NOT NULL,
+        username TEXT NOT NULL,
+        password TEXT NOT NULL,
+        user_data TEXT NOT NULL,
+        FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
+        UNIQUE (auth_server_id, username)
+    );"),
 ];
 
 const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -219,6 +240,7 @@ mod tests {
             "server_configs",
             "auth_server_clients",
             "oauth_client_configs",
+            "server_users",
             "schema_version",
         ] {
             assert!(table_exists(&conn, table).unwrap(), "missing table {table}");
@@ -228,7 +250,7 @@ mod tests {
     #[test]
     fn latest_version_reflects_last_migration() {
         // Pins the intentional version-2 gap: last entry decides, not array length.
-        assert_eq!(LATEST_VERSION, 9);
+        assert_eq!(LATEST_VERSION, 11);
     }
 
     #[test]
@@ -285,6 +307,60 @@ mod tests {
         assert!(conn
             .execute_batch("SELECT disabled_token_params, disabled_refresh_params FROM oauth_client_configs")
             .is_ok());
+    }
+
+    #[test]
+    fn upgrade_from_version_nine_adds_user_support() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE server_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                config_name TEXT NOT NULL,
+                auth_server_url TEXT NOT NULL,
+                token_url TEXT NOT NULL,
+                redirect_url_override TEXT NOT NULL DEFAULT '',
+                access_token_expiry INTEGER NOT NULL DEFAULT 3600,
+                refresh_token_expiry INTEGER NOT NULL DEFAULT 86400
+             );
+             CREATE TABLE auth_server_clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id TEXT NOT NULL,
+                client_secret TEXT NOT NULL,
+                auth_server_id INTEGER NOT NULL,
+                FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
+                UNIQUE (auth_server_id, client_id)
+             );
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 9);
+             INSERT INTO server_configs (config_name, auth_server_url, token_url)
+             VALUES ('old', 'http://localhost:9500', 'http://localhost:9500/token');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let user_based: i64 = conn
+            .query_row("SELECT user_based FROM server_configs WHERE config_name = 'old'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(user_based, 0);
+
+        conn.execute(
+            "INSERT INTO server_users (auth_server_id, username, password, user_data) VALUES (1, 'a', 'b', 'c')",
+            [],
+        )
+        .unwrap();
+        let duplicate = conn.execute(
+            "INSERT INTO server_users (auth_server_id, username, password, user_data) VALUES (1, 'a', 'x', 'y')",
+            [],
+        );
+        assert!(duplicate.is_err());
+        conn.execute("DELETE FROM server_configs WHERE id = 1", []).unwrap();
+        let remaining: i64 = conn
+            .query_row("SELECT COUNT(*) FROM server_users", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0);
     }
 
     #[test]

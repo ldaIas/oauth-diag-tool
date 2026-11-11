@@ -11,6 +11,7 @@ import {
 } from "./lib/authResult";
 import { parseClientConfig, toClientConfigInput } from "./lib/convert";
 import type { ServerSettings } from "./lib/serverSettings";
+import type { NewUser, UserEdit } from "./lib/serverUsers";
 import type { ClientConfigFields, ParsedClientConfig } from "./lib/types";
 
 export interface ApiCallbacks {
@@ -37,6 +38,9 @@ export interface Api {
   startServer(id: number): Promise<boolean>;
   stopServer(id: number): Promise<boolean>;
   updateServerSettings(id: number, settings: ServerSettings): Promise<boolean>;
+  addUserToServer(serverId: number, user: NewUser): Promise<boolean>;
+  updateUser(id: number, edit: UserEdit): Promise<boolean>;
+  deleteUser(id: number): Promise<boolean>;
   /** Creates when `editingId` is null, otherwise updates that config. */
   saveClientConfig(editingId: number | null, fields: ClientConfigFields): Promise<boolean>;
   deleteClientConfig(id: number): Promise<boolean>;
@@ -123,9 +127,19 @@ export function createApi(callbacks: ApiCallbacks): Api {
             settings.redirectUrlOverride,
             settings.accessTokenExpiry,
             settings.refreshTokenExpiry,
+            settings.userBased,
           ),
         loadServerConfigs,
       ),
+    addUserToServer: (serverId, user) =>
+      mutate(
+        "add_user_to_server",
+        () => commands.addUserToServer(serverId, user.username, user.password, user.userData),
+        loadServerConfigs,
+      ),
+    updateUser: (id, edit) =>
+      mutate("update_user", () => commands.updateUser(id, edit.password, edit.userData), loadServerConfigs),
+    deleteUser: (id) => mutate("delete_user", () => commands.deleteUser(id), loadServerConfigs),
     saveClientConfig(editingId, fields) {
       const input = toClientConfigInput(fields);
       return editingId === null

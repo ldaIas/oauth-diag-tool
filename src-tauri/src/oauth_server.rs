@@ -25,6 +25,8 @@ use std::sync::{Arc, Mutex};
 use tauri::AppHandle;
 use tauri_specta::Event;
 
+use crate::auth_server;
+
 #[derive(Clone)]
 pub struct ServerState {
     pub db: Arc<Mutex<Connection>>,
@@ -43,6 +45,8 @@ pub struct ServerState {
     pub refresh_token_expiry: u64,
     /// HMAC-SHA256 signing key for JWT access tokens
     pub signing_key: Vec<u8>,
+    /// When true, authorization requires signing in (or registering) as a server user
+    pub user_based: bool,
     /// Tauri app handle for emitting events to the frontend
     pub app_handle: AppHandle,
 }
@@ -56,6 +60,16 @@ pub struct ResourceAccessInfo {
     pub status: u16,
     pub error: Option<String>,
     pub timestamp: String,
+    /// User the token was issued to; None for client_credentials tokens
+    pub username: Option<String>,
+}
+
+/// Emitted when a user registers through the login page so the UI can reload its user list.
+#[derive(Clone, Serialize, specta::Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+#[tauri_specta(event_name = "server-users-changed")]
+pub struct ServerUsersChanged {
+    pub server_id: i64,
 }
 
 /// How long an issued authorization code stays valid.
@@ -68,6 +82,7 @@ pub struct AuthCodeEntry {
     pub scope: String,
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
+    pub username: Option<String>,
     pub expires_at: i64,
 }
 
@@ -75,6 +90,7 @@ pub struct AuthCodeEntry {
 pub struct RefreshTokenEntry {
     pub client_id: String,
     pub scope: String,
+    pub username: Option<String>,
     pub expires_at: i64,
 }
 
@@ -88,6 +104,8 @@ struct JwtClaims {
     iat: i64,
     scope: String,
     jti: String,
+    /// Always serialized (null for client_credentials tokens) so consumers see a stable shape.
+    username: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -190,70 +208,122 @@ async fn authorize_endpoint(
         None => redirect_uri,
     };
 
-    let client_id = html_escape(client_id);
-    let scope = html_escape(scope);
-    let request_state = html_escape(request_state);
-    let code_challenge = html_escape(code_challenge);
-    let code_challenge_method = html_escape(code_challenge_method);
-    let effective_redirect_uri = html_escape(effective_redirect_uri);
+    let request = AuthRequest {
+        client_id,
+        redirect_uri: effective_redirect_uri,
+        state: request_state,
+        scope,
+        code_challenge,
+        code_challenge_method,
+    };
 
-    // Render a simple consent page
-    let html = format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>Authorize</title>
-<style>
-body {{ font-family: sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; justify-content: center; padding: 60px; }}
-.card {{ background: #16213e; border-radius: 12px; padding: 40px; max-width: 420px; width: 100%; }}
-h1 {{ color: #e94560; font-size: 1.4em; margin-top: 0; }}
-.detail {{ margin: 12px 0; }}
-.label {{ color: #888; font-size: 0.85em; display: block; }}
-.value {{ color: #ccc; word-break: break-all; }}
-button {{ background: #e94560; color: white; border: none; padding: 12px 32px; border-radius: 6px; font-size: 1em; cursor: pointer; margin-top: 20px; width: 100%; }}
-button:hover {{ background: #c73652; }}
-.deny {{ background: #444; margin-top: 8px; }}
-.deny:hover {{ background: #555; }}
-</style>
-</head>
-<body>
-<div class="card">
-<h1>Authorization Request</h1>
-<div class="detail"><span class="label">Client ID</span><span class="value">{client_id}</span></div>
-<div class="detail"><span class="label">Scope</span><span class="value">{scope}</span></div>
-<div class="detail"><span class="label">Redirect URI</span><span class="value">{effective_redirect_uri}</span></div>
-<form method="POST" action="/authorize">
-<input type="hidden" name="client_id" value="{client_id}">
-<input type="hidden" name="redirect_uri" value="{effective_redirect_uri}">
-<input type="hidden" name="state" value="{request_state}">
-<input type="hidden" name="scope" value="{scope}">
-<input type="hidden" name="code_challenge" value="{code_challenge}">
-<input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
-<input type="hidden" name="action" value="approve">
-<button type="submit">Approve</button>
-</form>
-<form method="POST" action="/authorize">
-<input type="hidden" name="client_id" value="{client_id}">
-<input type="hidden" name="redirect_uri" value="{effective_redirect_uri}">
-<input type="hidden" name="state" value="{request_state}">
-<input type="hidden" name="code_challenge" value="{code_challenge}">
-<input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
-<input type="hidden" name="action" value="deny">
-<button type="submit" class="deny">Deny</button>
-</form>
-</div>
-</body>
-</html>"#
+    Ok(Html(if state.user_based {
+        render_login_page(&request, None)
+    } else {
+        render_consent_page(&request)
+    }))
+}
+
+/// The OAuth request parameters carried through the authorize pages as hidden fields.
+struct AuthRequest<'a> {
+    client_id: &'a str,
+    /// Already reflects the server's redirect override.
+    redirect_uri: &'a str,
+    state: &'a str,
+    scope: &'a str,
+    code_challenge: &'a str,
+    code_challenge_method: &'a str,
+}
+
+const PAGE_STYLE: &str = "\
+body { font-family: sans-serif; background: #1a1a2e; color: #e0e0e0; display: flex; justify-content: center; padding: 60px; }
+.card { background: #16213e; border-radius: 12px; padding: 40px; max-width: 420px; width: 100%; }
+h1 { color: #e94560; font-size: 1.4em; margin-top: 0; }
+h2 { color: #e94560; font-size: 1.1em; margin: 28px 0 0; }
+.detail { margin: 12px 0; }
+.label { color: #888; font-size: 0.85em; display: block; }
+.value { color: #ccc; word-break: break-all; }
+.error { background: #3a1c2a; border: 1px solid #e94560; border-radius: 6px; padding: 10px 12px; margin: 16px 0; }
+input[type=text], input[type=password], textarea { box-sizing: border-box; width: 100%; background: #0f1a30; color: #e0e0e0; border: 1px solid #333; border-radius: 6px; padding: 10px; margin-top: 12px; font: inherit; }
+button { background: #e94560; color: white; border: none; padding: 12px 32px; border-radius: 6px; font-size: 1em; cursor: pointer; margin-top: 20px; width: 100%; }
+button:hover { background: #c73652; }
+.deny { background: #444; margin-top: 8px; }
+.deny:hover { background: #555; }";
+
+fn render_page(title: &str, body: &str) -> String {
+    format!(
+        "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"UTF-8\">\n<title>{title}</title>\n<style>\n{PAGE_STYLE}\n</style>\n</head>\n<body>\n<div class=\"card\">\n{body}\n</div>\n</body>\n</html>"
+    )
+}
+
+fn render_hidden_fields(request: &AuthRequest, action: &str) -> String {
+    let fields = [
+        ("client_id", request.client_id),
+        ("redirect_uri", request.redirect_uri),
+        ("state", request.state),
+        ("scope", request.scope),
+        ("code_challenge", request.code_challenge),
+        ("code_challenge_method", request.code_challenge_method),
+        ("action", action),
+    ];
+    fields
+        .iter()
+        .map(|(name, value)| format!("<input type=\"hidden\" name=\"{}\" value=\"{}\">\n", name, html_escape(value)))
+        .collect()
+}
+
+fn render_request_details(request: &AuthRequest) -> String {
+    format!(
+        "<div class=\"detail\"><span class=\"label\">Client ID</span><span class=\"value\">{}</span></div>\n\
+<div class=\"detail\"><span class=\"label\">Scope</span><span class=\"value\">{}</span></div>\n\
+<div class=\"detail\"><span class=\"label\">Redirect URI</span><span class=\"value\">{}</span></div>\n",
+        html_escape(request.client_id),
+        html_escape(request.scope),
+        html_escape(request.redirect_uri),
+    )
+}
+
+fn render_consent_page(request: &AuthRequest) -> String {
+    let body = format!(
+        "<h1>Authorization Request</h1>\n{details}\
+<form method=\"POST\" action=\"/authorize\">\n{approve}<button type=\"submit\">Approve</button>\n</form>\n\
+<form method=\"POST\" action=\"/authorize\">\n{deny}<button type=\"submit\" class=\"deny\">Deny</button>\n</form>",
+        details = render_request_details(request),
+        approve = render_hidden_fields(request, "approve"),
+        deny = render_hidden_fields(request, "deny"),
     );
+    render_page("Authorize", &body)
+}
 
-    Ok(Html(html))
+fn render_login_page(request: &AuthRequest, error: Option<&str>) -> String {
+    let error_html = error
+        .map(|e| format!("<div class=\"error\">{}</div>\n", html_escape(e)))
+        .unwrap_or_default();
+    let body = format!(
+        "<h1>Sign in to authorize</h1>\n{details}{error_html}\
+<form method=\"POST\" action=\"/authorize\">\n{login}\
+<input type=\"text\" name=\"username\" placeholder=\"Username\" autocomplete=\"username\">\n\
+<input type=\"password\" name=\"password\" placeholder=\"Password\" autocomplete=\"current-password\">\n\
+<button type=\"submit\">Sign in</button>\n</form>\n\
+<form method=\"POST\" action=\"/authorize\">\n{deny}<button type=\"submit\" class=\"deny\">Deny</button>\n</form>\n\
+<h2>Create user</h2>\n\
+<form method=\"POST\" action=\"/authorize\">\n{register}\
+<input type=\"text\" name=\"username\" placeholder=\"Username\" autocomplete=\"off\">\n\
+<input type=\"password\" name=\"password\" placeholder=\"Password\" autocomplete=\"new-password\">\n\
+<textarea name=\"user_data\" rows=\"3\" placeholder=\"User data (optional)\"></textarea>\n\
+<button type=\"submit\">Create user and sign in</button>\n</form>",
+        details = render_request_details(request),
+        login = render_hidden_fields(request, "login"),
+        deny = render_hidden_fields(request, "deny"),
+        register = render_hidden_fields(request, "register"),
+    );
+    render_page("Sign in", &body)
 }
 
 async fn authorize_submit(
     State(state): State<ServerState>,
     body: String,
-) -> Result<Redirect, (StatusCode, Json<ErrorResponse>)> {
+) -> Result<axum::response::Response, (StatusCode, Json<ErrorResponse>)> {
     let params: HashMap<String, String> = form_urlencoded::parse(body.as_bytes())
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect();
@@ -293,8 +363,58 @@ async fn authorize_submit(
         if !request_state.is_empty() {
             redirect.append_pair("state", &request_state);
         }
-        return Ok(Redirect::to(&format!("{}?{}", redirect_uri, redirect.finish())));
+        return Ok(Redirect::to(&format!("{}?{}", redirect_uri, redirect.finish())).into_response());
     }
+
+    let username = if state.user_based {
+        let username = params.get("username").map(|u| u.trim()).unwrap_or_default();
+        let password = params.get("password").map(String::as_str).unwrap_or_default();
+        let login_error = match action.as_str() {
+            "login" => {
+                let conn = state.db.lock().map_err(|_| server_error())?;
+                match auth_server::verify_user(&conn, state.server_id, username, password) {
+                    Ok(true) => None,
+                    Ok(false) => Some("Invalid username or password".to_string()),
+                    Err(e) => {
+                        log::error!("failed to verify user: {}", e);
+                        return Err(server_error());
+                    }
+                }
+            }
+            "register" => {
+                let user_data = params.get("user_data").map(String::as_str);
+                let conn = state.db.lock().map_err(|_| server_error())?;
+                auth_server::add_user(&conn, state.server_id, username, password, user_data).err()
+            }
+            _ => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "invalid_request".to_string(),
+                        error_description: "This server requires signing in or creating a user".to_string(),
+                    }),
+                ));
+            }
+        };
+
+        if let Some(message) = login_error {
+            let request = AuthRequest {
+                client_id: &client_id,
+                redirect_uri: &redirect_uri,
+                state: &request_state,
+                scope: &scope,
+                code_challenge: &code_challenge,
+                code_challenge_method: &code_challenge_method,
+            };
+            return Ok(Html(render_login_page(&request, Some(&message))).into_response());
+        }
+        if action == "register" {
+            let _ = ServerUsersChanged { server_id: state.server_id }.emit(&state.app_handle);
+        }
+        Some(username.to_string())
+    } else {
+        None
+    };
 
     // Generate an authorization code
     let code = uuid::Uuid::new_v4().to_string();
@@ -311,6 +431,7 @@ async fn authorize_submit(
             scope: scope.clone(),
             code_challenge: if code_challenge.is_empty() { None } else { Some(code_challenge) },
             code_challenge_method: if code_challenge_method.is_empty() { None } else { Some(code_challenge_method) },
+            username,
             expires_at: now + AUTH_CODE_TTL_SECS,
         });
     }
@@ -321,7 +442,7 @@ async fn authorize_submit(
         redirect.append_pair("state", &request_state);
     }
 
-    Ok(Redirect::to(&format!("{}?{}", redirect_uri, redirect.finish())))
+    Ok(Redirect::to(&format!("{}?{}", redirect_uri, redirect.finish())).into_response())
 }
 
 async fn token_endpoint(
@@ -354,6 +475,7 @@ fn create_jwt_access_token(
     client_id: &str,
     scope: &str,
     resource: Option<&str>,
+    username: Option<&str>,
 ) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     let now = Utc::now().timestamp();
     let aud = resource.map(|r| r.to_string());
@@ -365,6 +487,7 @@ fn create_jwt_access_token(
         iat: now,
         scope: scope.to_string(),
         jti: uuid::Uuid::new_v4().to_string(),
+        username: username.map(str::to_string),
     };
 
     encode(
@@ -382,6 +505,7 @@ fn create_refresh_token(
     state: &ServerState,
     client_id: &str,
     scope: &str,
+    username: Option<&str>,
 ) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     let token = uuid::Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
@@ -393,6 +517,7 @@ fn create_refresh_token(
     tokens.insert(token.clone(), RefreshTokenEntry {
         client_id: client_id.to_string(),
         scope: scope.to_string(),
+        username: username.map(str::to_string),
         expires_at,
     });
 
@@ -449,10 +574,10 @@ fn token_client_credentials(
     let resource = params.iter().find(|(k, _)| k == "resource")
         .map(|(_, v)| v.as_str());
 
-    let access_token = create_jwt_access_token(state, &client_id, scope, resource)?;
+    let access_token = create_jwt_access_token(state, &client_id, scope, resource, None)?;
 
     let refresh_token = if has_offline_access(scope) {
-        Some(create_refresh_token(state, &client_id, scope)?)
+        Some(create_refresh_token(state, &client_id, scope, None)?)
     } else {
         None
     };
@@ -576,10 +701,10 @@ fn token_authorization_code(
     let resource = params.iter().find(|(k, _)| k == "resource")
         .map(|(_, v)| v.as_str());
 
-    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource)?;
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource, entry.username.as_deref())?;
 
     let refresh_token = if has_offline_access(&entry.scope) {
-        Some(create_refresh_token(state, &client_id, &entry.scope)?)
+        Some(create_refresh_token(state, &client_id, &entry.scope, entry.username.as_deref())?)
     } else {
         None
     };
@@ -664,7 +789,7 @@ fn token_refresh(
     let resource = params.iter().find(|(k, _)| k == "resource")
         .map(|(_, v)| v.as_str());
 
-    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource)?;
+    let access_token = create_jwt_access_token(state, &client_id, &entry.scope, resource, entry.username.as_deref())?;
 
     Ok(Json(TokenResponse {
         access_token,
@@ -764,13 +889,20 @@ fn extract_credentials_from_basic_auth(headers: &HeaderMap) -> Option<(String, S
     Some((client_id.to_string(), client_secret.to_string()))
 }
 
-fn emit_resource_access(state: &ServerState, client_id: &str, status: u16, error: Option<&str>) {
+fn emit_resource_access(
+    state: &ServerState,
+    client_id: &str,
+    status: u16,
+    error: Option<&str>,
+    username: Option<&str>,
+) {
     let info = ResourceAccessInfo {
         server_id: state.server_id,
         client_id: client_id.to_string(),
         status,
         error: error.map(|s| s.to_string()),
         timestamp: Utc::now().to_rfc3339(),
+        username: username.map(str::to_string),
     };
     let _ = info.emit(&state.app_handle);
 }
@@ -778,11 +910,12 @@ fn emit_resource_access(state: &ServerState, client_id: &str, status: u16, error
 fn resource_unauthorized(
     state: &ServerState,
     subject: &str,
+    username: Option<&str>,
     www_authenticate: HeaderValue,
     error: &str,
     error_description: &str,
 ) -> axum::response::Response {
-    emit_resource_access(state, subject, 401, Some(error_description));
+    emit_resource_access(state, subject, 401, Some(error_description), username);
     (
         StatusCode::UNAUTHORIZED,
         [(axum::http::header::WWW_AUTHENTICATE, www_authenticate)],
@@ -804,6 +937,7 @@ async fn resource_endpoint(
             return resource_unauthorized(
                 &state,
                 "",
+                None,
                 HeaderValue::from_static("Bearer error=\"missing_token\""),
                 "invalid_request",
                 "Missing Authorization header",
@@ -817,6 +951,7 @@ async fn resource_endpoint(
             return resource_unauthorized(
                 &state,
                 "",
+                None,
                 HeaderValue::from_static("Bearer error=\"invalid_request\""),
                 "invalid_request",
                 "Authorization header must use Bearer scheme",
@@ -841,6 +976,7 @@ async fn resource_endpoint(
             return resource_unauthorized(
                 &state,
                 "",
+                None,
                 HeaderValue::from_static("Bearer error=\"invalid_token\""),
                 "invalid_token",
                 &format!("Token validation failed: {}", e),
@@ -854,6 +990,7 @@ async fn resource_endpoint(
         return resource_unauthorized(
             &state,
             &token_data.claims.sub,
+            token_data.claims.username.as_deref(),
             HeaderValue::from_static("Bearer error=\"invalid_token\""),
             "invalid_token",
             &format!(
@@ -863,12 +1000,25 @@ async fn resource_endpoint(
         );
     }
 
-    emit_resource_access(&state, &token_data.claims.sub, 200, None);
-    (
-        StatusCode::OK,
-        Json(serde_json::to_value(&token_data.claims).unwrap_or_default()),
-    )
-        .into_response()
+    // Read at request time so edits to a user's data show up with already-issued tokens.
+    let user_data = token_data.claims.username.as_deref().and_then(|username| {
+        let conn = state.db.lock().ok()?;
+        auth_server::lookup_user_data(&conn, state.server_id, username).ok().flatten()
+    });
+
+    emit_resource_access(&state, &token_data.claims.sub, 200, None, token_data.claims.username.as_deref());
+    let body = resource_body(&token_data.claims, user_data.as_deref(), state.user_based);
+    (StatusCode::OK, Json(body)).into_response()
+}
+
+/// User-based servers return only the user's fields; free-access servers echo the token claims too.
+fn resource_body(claims: &JwtClaims, user_data: Option<&str>, user_based: bool) -> serde_json::Value {
+    if user_based {
+        return serde_json::json!({ "username": claims.username, "userData": user_data });
+    }
+    let mut body = serde_json::to_value(claims).unwrap_or_default();
+    body["userData"] = serde_json::json!(user_data);
+    body
 }
 
 #[cfg(test)]
@@ -879,6 +1029,34 @@ mod tests {
         let mut hasher = Sha256::new();
         hasher.update(verifier.as_bytes());
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize())
+    }
+
+    fn sample_claims(username: Option<&str>) -> JwtClaims {
+        JwtClaims {
+            iss: "http://localhost:9000".to_string(),
+            sub: "client-1".to_string(),
+            aud: Some("http://localhost:9000/resource".to_string()),
+            exp: 2,
+            iat: 1,
+            scope: "openid".to_string(),
+            jti: "jti-1".to_string(),
+            username: username.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn resource_body_user_based_has_only_user_fields() {
+        let body = resource_body(&sample_claims(Some("alice")), Some("alice data"), true);
+        assert_eq!(body, serde_json::json!({ "username": "alice", "userData": "alice data" }));
+    }
+
+    #[test]
+    fn resource_body_free_access_includes_claims() {
+        let body = resource_body(&sample_claims(None), None, false);
+        assert_eq!(body["sub"], "client-1");
+        assert_eq!(body["scope"], "openid");
+        assert_eq!(body["username"], serde_json::Value::Null);
+        assert_eq!(body["userData"], serde_json::Value::Null);
     }
 
     #[test]
@@ -993,5 +1171,55 @@ mod tests {
         let no_colon = base64::engine::general_purpose::STANDARD.encode("nocolonhere");
         let headers = headers_with_authorization(&format!("Basic {}", no_colon));
         assert_eq!(extract_credentials_from_basic_auth(&headers), None);
+    }
+
+    fn sample_request<'a>() -> AuthRequest<'a> {
+        AuthRequest {
+            client_id: "client<1>",
+            redirect_uri: "http://localhost/cb?a=1&b=\"2\"",
+            state: "st'ate",
+            scope: "openid <b>",
+            code_challenge: "chal",
+            code_challenge_method: "S256",
+        }
+    }
+
+    #[test]
+    fn hidden_fields_escape_values_and_set_action() {
+        let html = render_hidden_fields(&sample_request(), "login");
+        assert!(html.contains("name=\"client_id\" value=\"client&lt;1&gt;\""));
+        assert!(html.contains("value=\"http://localhost/cb?a=1&amp;b=&quot;2&quot;\""));
+        assert!(html.contains("value=\"st&#39;ate\""));
+        assert!(html.contains("name=\"action\" value=\"login\""));
+        assert!(!html.contains("client<1>"));
+    }
+
+    #[test]
+    fn consent_page_has_approve_and_deny_without_login_form() {
+        let html = render_consent_page(&sample_request());
+        assert!(html.contains("value=\"approve\""));
+        assert!(html.contains("value=\"deny\""));
+        assert!(!html.contains("name=\"password\""));
+        assert!(html.contains("openid &lt;b&gt;"));
+    }
+
+    #[test]
+    fn login_page_escapes_values_and_includes_error() {
+        let html = render_login_page(&sample_request(), Some("bad <script>alert(1)</script>"));
+        assert!(html.contains("bad &lt;script&gt;alert(1)&lt;/script&gt;"));
+        assert!(!html.contains("<script>"));
+        assert!(html.contains("client&lt;1&gt;"));
+        assert!(!html.contains("client<1>"));
+        assert!(html.contains("value=\"login\""));
+        assert!(html.contains("value=\"register\""));
+        assert!(html.contains("value=\"deny\""));
+        assert!(!html.contains("value=\"approve\""));
+        assert!(html.contains("name=\"user_data\""));
+    }
+
+    #[test]
+    fn login_page_without_error_has_no_error_block() {
+        let html = render_login_page(&sample_request(), None);
+        assert!(!html.contains("class=\"error\""));
     }
 }
