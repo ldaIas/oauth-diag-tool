@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Add feature-pr skill documenting the draft PR -> changelog flow [PR](https://github.com/ldaIas/oauth-diag-tool/pull/22)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)
