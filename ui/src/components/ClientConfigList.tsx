@@ -3,10 +3,11 @@
 
 import type { ClientConfigListUi, DisabledParamsField, ExpandableSection } from "../hooks/useClientConfigListUi";
 import { sortedEntries } from "../lib/params";
+import { matchesSearch } from "../lib/search";
 import type { ParsedClientConfig } from "../lib/types";
 import { useAppState } from "../state";
 import { AuthorizeButtons, AuthResponseView, MetadataStateView } from "./AuthResults";
-import { chevron, Detail } from "./shared";
+import { CardToggle, chevron, Detail, SearchBox } from "./shared";
 import { ToggleSection } from "./ToggleSection";
 
 const SEND_PARAMS = ["client_id", "client_secret", "scope"];
@@ -22,6 +23,9 @@ interface ClientConfigListProps {
 
 export function ClientConfigList({ ui, onOpenCreateForm, onEditConfig }: ClientConfigListProps) {
   const { clientConfigs } = useAppState();
+  const visible = clientConfigs.filter((config) =>
+    matchesSearch(ui.search, [config.name, config.grantType, config.clientId, config.issuerUrl]),
+  );
   return (
     <div className="page-content">
       {clientConfigs.length === 0 ? (
@@ -29,11 +33,20 @@ export function ClientConfigList({ ui, onOpenCreateForm, onEditConfig }: ClientC
           <span className="empty-label">No client configurations</span>
         </div>
       ) : (
-        <div className="server-list">
-          {clientConfigs.map((config) => (
-            <ConfigCard key={config.id} config={config} ui={ui} onEdit={() => onEditConfig(config)} />
-          ))}
-        </div>
+        <>
+          <SearchBox value={ui.search} placeholder="Search client configurations" onChange={ui.setSearch} />
+          {visible.length === 0 ? (
+            <div className="empty-state">
+              <span className="empty-label">No matching configurations</span>
+            </div>
+          ) : (
+            <div className="server-list">
+              {visible.map((config) => (
+                <ConfigCard key={config.id} config={config} ui={ui} onEdit={() => onEditConfig(config)} />
+              ))}
+            </div>
+          )}
+        </>
       )}
       <div className="footer">
         <button className="btn-create" onClick={onOpenCreateForm}>
@@ -77,13 +90,26 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
     );
   }
 
+  if (!ui.isCardExpanded(config.id)) {
+    return (
+      <div className="server-card collapsed">
+        <div className="server-card-header">
+          <CardToggle
+            expanded={false}
+            name={config.name}
+            meta=""
+            running={state.kind === "loading"}
+            onToggle={() => ui.toggleCard(config.id)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="server-card">
       <div className="server-card-header">
-        <div className="server-card-left">
-          <span className="server-name">{config.name}</span>
-          <span className="server-meta">{config.grantType}</span>
-        </div>
+        <CardToggle expanded name={config.name} meta={config.grantType} onToggle={() => ui.toggleCard(config.id)} />
         <div className="server-card-right">
           <AuthorizeButtons
             state={state}

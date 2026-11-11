@@ -27,6 +27,11 @@ export type DisabledParamsField = "disabledParams" | "disabledTokenParams" | "di
 const IDLE = { kind: "idle" } as const;
 
 export interface ClientConfigListUi {
+  search: string;
+  setSearch(search: string): void;
+  /** Cards show only their name until expanded. */
+  isCardExpanded(configId: number): boolean;
+  toggleCard(configId: number): void;
   authState(configId: number): AuthState;
   metadataState(configId: number): MetadataState;
   isExpanded(section: ExpandableSection, configId: number): boolean;
@@ -56,6 +61,8 @@ export function useClientConfigListUi(): ClientConfigListUi {
   const [authStates, setAuthStates] = useState<Readonly<Record<number, AuthState>>>({});
   const [metadataStates, setMetadataStates] = useState<Readonly<Record<number, MetadataState>>>({});
   const [expanded, setExpanded] = useState(NO_EXPANDED);
+  const [search, setSearch] = useState("");
+  const [expandedCards, setExpandedCards] = useState<ReadonlySet<number>>(new Set());
 
   function setAuthState(configId: number, state: AuthState) {
     setAuthStates((prev) => ({ ...prev, [configId]: state }));
@@ -97,6 +104,12 @@ export function useClientConfigListUi(): ClientConfigListUi {
   }
 
   return {
+    search,
+    setSearch,
+    isCardExpanded: (configId) => expandedCards.has(configId),
+    toggleCard(configId) {
+      setExpandedCards((prev) => toggleMember(prev, configId));
+    },
     authState: (configId) => authStates[configId] ?? IDLE,
     metadataState: (configId) => metadataStates[configId] ?? IDLE,
     isExpanded: (section, configId) => expanded[section].has(configId),

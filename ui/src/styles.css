@@ -211,7 +211,30 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   justify-content: space-between;
 }
 
-.server-card-left { display: flex; flex-direction: column; gap: 4px; }
+.server-card.collapsed { padding: 8px 18px; }
+
+.card-toggle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-toggle-title { display: flex; align-items: center; gap: 8px; }
+
+.card-chevron { width: 12px; font-size: 9px; color: var(--text-dim); }
+
+.card-toggle-meta { padding-left: 20px; }
+
+.search-input { margin-bottom: 10px; }
 
 .server-name { font-size: 13px; font-weight: 500; color: var(--text); }
 

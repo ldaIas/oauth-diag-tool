@@ -18,6 +18,11 @@ import { useAppState } from "../state";
 const SAVED_FLASH_MS = 2000;
 
 export interface ServerListUi {
+  search: string;
+  setSearch(search: string): void;
+  /** Cards show only their name until expanded. */
+  expandedCards: ReadonlySet<number>;
+  toggleCard(serverId: number): void;
   expandedClients: ReadonlySet<number>;
   expandedSettings: ReadonlySet<number>;
   settingsEdits: Readonly<Record<number, SettingsEdit>>;
@@ -90,6 +95,8 @@ function useFlashSet(): [ReadonlySet<number>, (id: number) => void] {
  */
 export function useServerListUi(): ServerListUi {
   const { servers, api } = useAppState();
+  const [search, setSearch] = useState("");
+  const [expandedCards, setExpandedCards] = useState<ReadonlySet<number>>(new Set());
   const [expandedClients, setExpandedClients] = useState<ReadonlySet<number>>(new Set());
   const [expandedSettings, setExpandedSettings] = useState<ReadonlySet<number>>(new Set());
   const [settingsEdits, setSettingsEdits] = useState<Readonly<Record<number, SettingsEdit>>>({});
@@ -101,6 +108,12 @@ export function useServerListUi(): ServerListUi {
   const [userEdits, setUserEdits] = useState<Readonly<Record<number, UserEdit>>>({});
 
   return {
+    search,
+    setSearch,
+    expandedCards,
+    toggleCard(serverId) {
+      setExpandedCards((prev) => toggleMember(prev, serverId));
+    },
     expandedClients,
     expandedSettings,
     settingsEdits,
