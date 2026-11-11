@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Replace the Elm frontend with TypeScript + React, using tauri-specta generated bindings; Tauri 2.12.5 [PR](https://github.com/ldaIas/oauth-diag-tool/pull/16)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)
