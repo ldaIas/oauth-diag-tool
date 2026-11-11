@@ -8,6 +8,7 @@
   - User data defaults to `example data for user <username>`
   - `GET /resource` responses include `username` and `userData` (null when the token has no user, e.g. client_credentials). With user-based access on, the response contains only those two fields and no token claims. Access tokens carry a `username` claim, and refresh keeps it
   - The Resource section shows the last user
+- Add copy and decode actions to the access token in client responses [PR](https://github.com/ldaIas/oauth-diag-tool/pull/18)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)

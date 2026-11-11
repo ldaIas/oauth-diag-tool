@@ -965,3 +965,39 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   resize: vertical;
   line-height: 1.4;
 }
+
+.access-token {
+  position: relative;
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+.access-token-actions {
+  display: none;
+  position: absolute;
+  top: -2px;
+  right: 0;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.access-token:hover .access-token-actions {
+  display: inline-flex;
+}
+
+.access-token-action {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-family: var(--font);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.access-token-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
+}
