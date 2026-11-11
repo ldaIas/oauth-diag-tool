@@ -37,10 +37,12 @@ OAuth Servers let you spin up local OAuth authorization servers for testing.
 - Running servers expose the following endpoints:
   - `GET /authorize` — Authorization endpoint (renders a consent page for authorization_code flow)
   - `POST /authorize` — Processes approve/deny, issues auth codes
-  - `POST /token` — Token endpoint (supports `client_credentials` and `authorization_code` grants)
+  - `POST /token` — Token endpoint (supports `client_credentials`, `authorization_code`, and `refresh_token` grants; PKCE S256)
+  - `GET /resource` — Sample protected resource; validates the Bearer token and reports the access in the server card
   - `GET /.well-known/openid-configuration` — Discovery document
 - Client authentication supports both `client_secret_post` and `client_secret_basic`.
-- Access tokens are opaque UUIDs.
+- Access tokens are JWTs signed with a per-server HMAC-SHA256 key. Refresh tokens are issued when the requested scope includes `offline_access`.
+- Token expiries and a redirect URL override are configurable per server in its settings.
 - All running servers are automatically stopped when the app closes.
 - A server cannot be deleted while it is running.
 
@@ -58,7 +60,8 @@ Client Configurations let you store and test OAuth client details against any OA
 **Authorizing:**
 - Click "Authorize" on a client configuration to initiate the OAuth flow.
 - For `client_credentials`, the token request is made directly.
-- For `authorization_code`, the app starts a local callback server on port 5757, opens the authorization URL in Google Chrome, and exchanges the received code for tokens. PKCE (S256) is used automatically. Requires Chrome to be installed.
+- For `authorization_code`, the app starts a local callback server on port 5757, opens the authorization URL in a browser, and exchanges the received code for tokens. PKCE (S256) is used automatically. Chrome is preferred (opened with an isolated profile and devtools); the OS default browser is used when Chrome isn't installed.
+- For configs with a stored refresh token, "Refresh" exchanges it for new tokens; rotated refresh tokens are persisted automatically.
 - Auth results appear in an expandable section on the configuration card.
 
 
@@ -69,7 +72,7 @@ Client Configurations let you store and test OAuth client details against any OA
 - **Rust** (1.77.2+) — [rustup.rs](https://rustup.rs)
 - **Tauri CLI** — `cargo install tauri-cli`
 - **Elm** (0.19.1) — [guide.elm-lang.org/install](https://guide.elm-lang.org/install/elm.html)
-- **Google Chrome** — required for authorization_code flows (the app opens Chrome with dev tools directly for the browser-based consent step)
+- **Google Chrome** — optional; when installed, authorization_code flows open in Chrome with devtools for inspecting the consent step (otherwise the OS default browser is used)
 
 #### macOS
 
@@ -146,6 +149,17 @@ cargo tauri build
 
 ```bash
 cd ui && elm make src/Main.elm --output dist/main.js
+```
+
+### Testing
+
+```bash
+# Rust tests and lints (CI treats clippy warnings as errors)
+cd src-tauri && cargo test
+cd src-tauri && cargo clippy --all-targets -- -D warnings
+
+# Elm tests (requires elm-test: npm install -g elm-test)
+cd ui && elm-test
 ```
 
 ## Tech Stack

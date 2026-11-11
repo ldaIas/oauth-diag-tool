@@ -8,7 +8,7 @@ This project uses a strict two-language architecture:
 
 - **Backend:** All backend code must be written in **Rust**, using the Tauri 2 framework. Backend source lives in `src-tauri/`.
 - **Frontend:** All frontend code must be written in **Elm 0.19**. Frontend source lives in `ui/src/`.
-- **Bridge:** Communication between Elm and Tauri happens through Elm ports and Tauri `invoke()` calls, wired together in `ui/dist/index.html`. This HTML file is the only place where JavaScript should exist, and it should be limited to port subscriptions and Tauri command invocations.
+- **Bridge:** Communication between Elm and Tauri happens through Elm ports and Tauri `invoke()` calls, wired together in `ui/dist/bridge.js`. This file is the only place where JavaScript should exist, and it should be limited to port subscriptions and Tauri command invocations.
 
 Do not introduce JavaScript frameworks, npm dependencies, or Node.js tooling.
 
@@ -30,8 +30,10 @@ ui/              # Elm frontend
     ServerList.elm
     ClientConfigList.elm
     ClientConfigForm.elm
+  tests/         # elm-test suites
   dist/
-    index.html   # JS bridge between Elm ports and Tauri invoke()
+    index.html   # Static shell that loads the compiled app
+    bridge.js    # JS bridge between Elm ports and Tauri invoke()
     styles.css   # Dark theme styles
     main.js      # Compiled Elm output (do not edit directly)
 ```
@@ -57,11 +59,23 @@ cd ui && elm make src/Main.elm --output dist/main.js
 2. Register it in the Tauri builder in `lib.rs`.
 3. Add the command permission to `src-tauri/permissions/default.toml` — commands not listed here will be silently blocked.
 4. Add an Elm port in `Main.elm` (or the relevant module).
-5. Wire the port to the Tauri `invoke()` call in `ui/dist/index.html`.
+5. Wire the port to the Tauri `invoke()` call in `ui/dist/bridge.js`.
 
 ### Database Changes
 
 Migrations are versioned in `db.rs`. Add new migrations with the next version number; they run automatically on startup.
+
+## Testing
+
+CI runs all of these on every push and PR — clippy warnings fail the build, including in test code:
+
+```bash
+cd src-tauri && cargo clippy --all-targets -- -D warnings
+cd src-tauri && cargo test
+cd ui && elm-test   # requires: npm install -g elm-test
+```
+
+Rust tests live in inline `#[cfg(test)]` modules at the bottom of each file; Elm tests live in `ui/tests/`.
 
 ## Code Style
 

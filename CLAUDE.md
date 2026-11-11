@@ -20,9 +20,21 @@ cd ui && elm make src/Main.elm --output dist/main.js
 
 # Lint the Rust backend (CI runs this with -D warnings)
 cd src-tauri && cargo clippy --all-targets -- -D warnings
+
+# Run Rust tests
+cd src-tauri && cargo test
+
+# Run Elm tests (elm-test is installed globally via npm; there is no npm project)
+cd ui && elm-test
 ```
 
-There are no tests yet. CI (`.github/workflows/ci.yml`) runs clippy and an Elm build on pushes/PRs.
+CI (`.github/workflows/ci.yml`) runs clippy + `cargo test` (macOS) and an Elm build + `elm-test` (Ubuntu) on pushes/PRs. Clippy uses `--all-targets -D warnings`, so test code must be clippy-clean too.
+
+## Testing Conventions
+
+- Rust tests are inline `#[cfg(test)] mod tests` blocks at the bottom of each module (the modules are private in `lib.rs`, so inline tests can reach private helpers). DB-backed tests get an in-memory SQLite connection from `db::open_test_connection()`, which runs the full schema init.
+- Migration upgrade tests hand-build the historical base schema — the fresh-install `SCHEMA` already contains all migrated columns, so running migrations against it would fail with "duplicate column".
+- Elm tests live in `ui/tests/` (elm-test, `elm-explorations/test` in `test-dependencies`). Decoder fixtures in `ServerListTests`/`ClientConfigListTests` mirror the Rust serde camelCase output and pin the Rust↔Elm JSON contract. A few helpers (`jsonStringDict`, `removeAt`/`updateAt`, `nextPort`/`findAvailable`, `recomputeUrls`, `AuthOutcome(..)`) are exposed from their modules primarily for testing.
 
 ## Architecture
 
@@ -30,9 +42,9 @@ There are no tests yet. CI (`.github/workflows/ci.yml`) runs clippy and an Elm b
 
 - `src-tauri/` — Rust backend using Tauri 2. Entry point is `main.rs` which calls `lib.rs` for Tauri Builder setup.
   - `src-tauri/src/lib.rs` — Tauri command definitions and app setup. Manages three pieces of state: `Arc<Mutex<Connection>>` (DB), `Mutex<RunningServers>` (server tasks), and `PendingAuthorizations` (in-flight auth code flows; a second authorize for the same config while one is in flight is rejected). Delegates logic to `auth_server`, `auth_client`, and `db` modules. `create_client_config`/`update_client_config` take a single `config: ClientConfigInput` struct argument (the JS bridge passes `{ config: {...} }`).
-  - `src-tauri/src/db.rs` — SQLite init with versioned migrations (`LATEST_VERSION` is derived from the last `MIGRATIONS` entry; version 2 was never shipped — keep the numbering gap). Tables: `server_configs`, `auth_server_clients` (FK cascade delete), `oauth_client_configs`, `schema_version`. `PRAGMA foreign_keys = ON`.
+  - `src-tauri/src/db.rs` — SQLite init with versioned migrations (`LATEST_VERSION` is derived from the last `MIGRATIONS` entry; version 2 was never shipped — keep the numbering gap). `init()` opens the file; `init_connection(&Connection)` does the PRAGMA/schema/migration work on any connection (tests feed it an in-memory one). Tables: `server_configs`, `auth_server_clients` (FK cascade delete), `oauth_client_configs`, `schema_version`. `PRAGMA foreign_keys = ON`.
   - `src-tauri/src/auth_server.rs` — Server config CRUD and lifecycle. `start()` binds the listener (127.0.0.1 only) *before* spawning the task so port conflicts are returned as errors instead of leaving a phantom "running" server. `extract_port()` is strict and returns `Result`; `get_all()` sends derived `port` and `issuerUrl` to the frontend so the Elm side never parses URLs. Generates URL-safe client IDs (24 chars) and secrets (48 chars). Running servers are stopped on app close via `Drop`.
-  - `src-tauri/src/oauth_server.rs` — Axum-based OAuth server. Routes: `GET /authorize` (consent page; all interpolated values are HTML-escaped via `html_escape`), `POST /authorize` (re-validates client_id and re-applies the redirect override server-side — hidden form fields are never trusted; redirect_uri must be absolute http(s)), `POST /token` (client_credentials, authorization_code, refresh_token grants; JWT access tokens signed with per-server HMAC-SHA256 key), `GET /resource` (validates Bearer JWT incl. audience, emits `resource-access` event to the frontend), `GET /.well-known/openid-configuration`. Supports `client_secret_post` and `client_secret_basic`. Auth codes are stored in-memory with a 10-minute TTL (`AUTH_CODE_TTL_SECS`); expired codes and refresh tokens are pruned on insert. Refresh tokens are issued when scope includes `offline_access`; expiries are configurable per server.
+  - `src-tauri/src/oauth_server.rs` — Axum-based OAuth server. Routes: `GET /authorize` (consent page; all interpolated values are HTML-escaped via `html_escape`), `POST /authorize` (re-validates client_id and re-applies the redirect override server-side — hidden form fields are never trusted; redirect_uri must be absolute http(s)), `POST /token` (client_credentials, authorization_code, refresh_token grants; PKCE checks go through the pure `verify_pkce()`; JWT access tokens signed with per-server HMAC-SHA256 key), `GET /resource` (validates Bearer JWT incl. audience, emits `resource-access` event to the frontend), `GET /.well-known/openid-configuration`. Supports `client_secret_post` and `client_secret_basic`. Auth codes are stored in-memory with a 10-minute TTL (`AUTH_CODE_TTL_SECS`); expired codes and refresh tokens are pruned on insert. Refresh tokens are issued when scope includes `offline_access`; expiries are configurable per server.
   - `src-tauri/src/auth_client.rs` — Client-side OAuth flow execution: `client_credentials`, `authorization_code` (browser flow with PKCE S256, fixed callback port 5757, 5-minute timeout, cancellable), and `refresh_token`. `lookup_config()` returns a `ResolvedClientConfig` struct with the JSON param blobs already parsed. The callback handler only enforces the `state` check when the state param was actually sent (it can be disabled for diagnostics). `open_browser()` tries Chrome (per-OS paths, isolated profile, devtools) and falls back to the OS default browser. Refresh tokens in token responses are persisted automatically; rotation is supported.
   - `src-tauri/permissions/default.toml` — Tauri 2 command permissions. **New commands must be added here** or they will be silently blocked.
 - `ui/` — Elm frontend following The Elm Architecture. Compiled JS goes to `ui/dist/main.js` (gitignored), served with `ui/dist/index.html`, `ui/dist/bridge.js`, `ui/dist/styles.css`, and `ui/dist/fonts/` (JetBrains Mono is bundled locally; no network fonts — the CSP in `tauri.conf.json` only allows `'self'` plus the Tauri IPC origin).

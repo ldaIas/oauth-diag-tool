@@ -4,7 +4,9 @@
 
 module ClientConfigList exposing
     ( Action(..)
+    , AuthOutcome(..)
     , AuthResult
+    , AuthSuccessData
     , ClientConfig
     , MetadataPayload
     , MetadataResult
@@ -14,10 +16,17 @@ module ClientConfigList exposing
     , clientConfigDecoder
     , encodeConfigFields
     , init
+    , jsonStringDict
     , metadataResultDecoder
     , update
     , view
     )
+
+{-| Client config list: authorize/refresh actions, auth and metadata results,
+and the param-toggle sections. Owns the decode/encode boundary where the DB's
+JSON-string param columns become `Dict`s (`jsonStringDict` /
+`encodeConfigFields`).
+-}
 
 import Dict exposing (Dict)
 import Html exposing (..)

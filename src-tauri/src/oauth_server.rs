@@ -1,6 +1,12 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+//! The local OAuth authorization server (Axum, bound to 127.0.0.1): consent
+//! page, token endpoint (client_credentials / authorization_code / refresh_token,
+//! PKCE), a sample protected `/resource`, and OIDC discovery. Access tokens are
+//! JWTs signed with a per-server HMAC key; auth codes and refresh tokens live
+//! in memory with TTLs.
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
@@ -395,6 +401,26 @@ fn has_offline_access(scope: &str) -> bool {
     scope.split_whitespace().any(|s| s == "offline_access")
 }
 
+/// Ok(true) = verifier matches the challenge, Ok(false) = mismatch,
+/// Err(method) = unsupported code_challenge_method.
+fn verify_pkce(
+    expected_challenge: &str,
+    method: &str,
+    code_verifier: &str,
+) -> Result<bool, String> {
+    let computed_challenge = match method {
+        "S256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(code_verifier.as_bytes());
+            let digest = hasher.finalize();
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+        }
+        "plain" => code_verifier.to_string(),
+        _ => return Err(method.to_string()),
+    };
+    Ok(computed_challenge == expected_challenge)
+}
+
 fn token_client_credentials(
     state: &ServerState,
     headers: &HeaderMap,
@@ -496,15 +522,18 @@ fn token_authorization_code(
             ))?;
 
         let method = entry.code_challenge_method.as_deref().unwrap_or("plain");
-        let computed_challenge = match method {
-            "S256" => {
-                let mut hasher = Sha256::new();
-                hasher.update(code_verifier.as_bytes());
-                let digest = hasher.finalize();
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+        match verify_pkce(expected_challenge, method, code_verifier) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "invalid_grant".to_string(),
+                        error_description: "PKCE code_verifier does not match code_challenge".to_string(),
+                    }),
+                ));
             }
-            "plain" => code_verifier.to_string(),
-            _ => {
+            Err(method) => {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
@@ -513,16 +542,6 @@ fn token_authorization_code(
                     }),
                 ));
             }
-        };
-
-        if computed_challenge != *expected_challenge {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: "PKCE code_verifier does not match code_challenge".to_string(),
-                }),
-            ));
         }
     }
 
@@ -848,4 +867,129 @@ async fn resource_endpoint(
         Json(serde_json::to_value(&token_data.claims).unwrap_or_default()),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s256_challenge(verifier: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize())
+    }
+
+    #[test]
+    fn html_escape_escapes_all_special_characters() {
+        assert_eq!(
+            html_escape(r#"<a href="x" onclick='y'>&</a>"#),
+            "&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;"
+        );
+    }
+
+    #[test]
+    fn html_escape_leaves_plain_text_untouched() {
+        assert_eq!(html_escape(""), "");
+        assert_eq!(html_escape("plain text 123"), "plain text 123");
+    }
+
+    #[test]
+    fn has_offline_access_matches_exact_scope_token() {
+        assert!(has_offline_access("offline_access"));
+        assert!(has_offline_access("openid profile offline_access email"));
+        assert!(!has_offline_access("offline_access2"));
+        assert!(!has_offline_access("my_offline_access"));
+        assert!(!has_offline_access(""));
+    }
+
+    #[test]
+    fn verify_pkce_s256_accepts_matching_verifier() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        assert_eq!(verify_pkce(&s256_challenge(verifier), "S256", verifier), Ok(true));
+    }
+
+    #[test]
+    fn verify_pkce_s256_rejects_wrong_verifier() {
+        let challenge = s256_challenge("correct-verifier");
+        assert_eq!(verify_pkce(&challenge, "S256", "wrong-verifier"), Ok(false));
+    }
+
+    #[test]
+    fn verify_pkce_plain_compares_directly() {
+        assert_eq!(verify_pkce("abc123", "plain", "abc123"), Ok(true));
+        assert_eq!(verify_pkce("abc123", "plain", "xyz789"), Ok(false));
+    }
+
+    #[test]
+    fn verify_pkce_rejects_unsupported_method() {
+        assert_eq!(
+            verify_pkce("whatever", "S512", "whatever"),
+            Err("S512".to_string())
+        );
+    }
+
+    fn body_params(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn extract_credentials_from_body_requires_both_fields() {
+        let params = body_params(&[("client_secret", "s3cret"), ("client_id", "my-client")]);
+        assert_eq!(
+            extract_credentials_from_body(&params),
+            Some(("my-client".to_string(), "s3cret".to_string()))
+        );
+
+        let only_id = body_params(&[("client_id", "my-client")]);
+        assert_eq!(extract_credentials_from_body(&only_id), None);
+
+        let only_secret = body_params(&[("client_secret", "s3cret")]);
+        assert_eq!(extract_credentials_from_body(&only_secret), None);
+
+        assert_eq!(extract_credentials_from_body(&[]), None);
+    }
+
+    fn headers_with_authorization(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_decodes_valid_header() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("my-client:s3cret");
+        let headers = headers_with_authorization(&format!("Basic {}", encoded));
+        assert_eq!(
+            extract_credentials_from_basic_auth(&headers),
+            Some(("my-client".to_string(), "s3cret".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_splits_on_first_colon() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("id:se:cr:et");
+        let headers = headers_with_authorization(&format!("Basic {}", encoded));
+        assert_eq!(
+            extract_credentials_from_basic_auth(&headers),
+            Some(("id".to_string(), "se:cr:et".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_rejects_bad_input() {
+        assert_eq!(extract_credentials_from_basic_auth(&HeaderMap::new()), None);
+
+        let bearer = headers_with_authorization("Bearer sometoken");
+        assert_eq!(extract_credentials_from_basic_auth(&bearer), None);
+
+        let bad_base64 = headers_with_authorization("Basic !!!not-base64!!!");
+        assert_eq!(extract_credentials_from_basic_auth(&bad_base64), None);
+
+        let no_colon = base64::engine::general_purpose::STANDARD.encode("nocolonhere");
+        let headers = headers_with_authorization(&format!("Basic {}", no_colon));
+        assert_eq!(extract_credentials_from_basic_auth(&headers), None);
+    }
 }

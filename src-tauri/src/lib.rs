@@ -1,6 +1,11 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+//! Tauri command definitions and app setup. Commands are thin wrappers that
+//! lock the shared state (DB connection, running servers, pending
+//! authorizations) and delegate to the `auth_server`, `auth_client`, and `db`
+//! modules. New commands must also be listed in `permissions/default.toml`.
+
 mod auth_client;
 mod auth_server;
 mod db;

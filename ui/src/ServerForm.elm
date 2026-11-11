@@ -2,7 +2,11 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ServerForm exposing (Action(..), Model, Msg, init, update, view)
+module ServerForm exposing (Action(..), Model, Msg, init, recomputeUrls, update, view)
+
+{-| Create form for a local OAuth server: name plus port, with the
+authorization/token URLs derived from the port.
+-}
 
 import Html exposing (..)
 import Html.Attributes exposing (class, placeholder, type_, value)

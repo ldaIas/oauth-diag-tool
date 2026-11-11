@@ -4,6 +4,12 @@
 
 port module Main exposing (main)
 
+{-| Top-level app: split layout with independent server (left) and client
+config (right) pages. Owns every port to the JS bridge and encodes all
+outgoing payloads; decode failures and backend errors surface in the
+dismissible error banner.
+-}
+
 import Browser
 import ClientConfigForm
 import ClientConfigList

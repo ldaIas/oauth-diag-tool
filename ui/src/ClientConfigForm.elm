@@ -2,7 +2,12 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, toConfigFields, update, view)
+module ClientConfigForm exposing (Action(..), Model, Msg, init, initFromEdit, initFromImport, removeAt, toConfigFields, update, updateAt, view)
+
+{-| Create/edit form for client configs. `initFromEdit` takes the full
+`ClientConfig` so no fields are lost on edit; `toConfigFields` produces the
+canonical record accepted by `encodeConfigFields`.
+-}
 
 import ClientConfigList exposing (ClientConfig)
 import Dict exposing (Dict)

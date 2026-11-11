@@ -1,6 +1,11 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+//! Client-side OAuth: client config CRUD and flow execution against any
+//! server (local or external) — client_credentials, browser-based
+//! authorization_code with PKCE and a fixed-port callback listener, and
+//! refresh_token. Also fetches server metadata from the discovery endpoint.
+
 use base64::Engine;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -663,4 +668,179 @@ fn open_browser(url: &str) -> Result<(), String> {
     fallback
         .map(|_| ())
         .map_err(|e| format!("Failed to open a browser: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_input() -> ClientConfigInput {
+        ClientConfigInput {
+            name: "my client".to_string(),
+            issuer_url: "http://localhost:9500".to_string(),
+            authorization_url: "http://localhost:9500/authorize".to_string(),
+            token_url: "http://localhost:9500/token".to_string(),
+            client_id: "client-abc".to_string(),
+            client_secret: "secret-xyz".to_string(),
+            scopes: "openid offline_access".to_string(),
+            grant_type: "authorization_code".to_string(),
+            extra_params: r#"{"audience":"api"}"#.to_string(),
+            disabled_params: r#"{"scope":true,"state":false}"#.to_string(),
+            disabled_token_params: r#"{"client_secret":true}"#.to_string(),
+            scopes_supported: "openid profile".to_string(),
+            disabled_refresh_params: r#"{"scope":true}"#.to_string(),
+        }
+    }
+
+    fn only_id(conn: &Connection) -> i64 {
+        get_all(conn).unwrap()[0].id
+    }
+
+    #[test]
+    fn parse_disabled_set_keeps_only_true_keys() {
+        let set = parse_disabled_set(r#"{"a":true,"b":false,"c":true}"#);
+        assert_eq!(set, HashSet::from(["a".to_string(), "c".to_string()]));
+    }
+
+    #[test]
+    fn parse_disabled_set_defaults_to_empty_on_bad_input() {
+        assert!(parse_disabled_set("{}").is_empty());
+        assert!(parse_disabled_set("").is_empty());
+        assert!(parse_disabled_set("{not json").is_empty());
+    }
+
+    #[test]
+    fn generate_pkce_produces_valid_s256_pair() {
+        let (verifier, challenge) = generate_pkce();
+
+        // 32 random bytes base64url-encoded without padding is always 43 chars.
+        assert_eq!(verifier.len(), 43);
+        let url_safe = |s: &str| {
+            s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        };
+        assert!(url_safe(&verifier));
+        assert!(url_safe(&challenge));
+
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        let expected = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize());
+        assert_eq!(challenge, expected);
+
+        let (second_verifier, _) = generate_pkce();
+        assert_ne!(verifier, second_verifier);
+    }
+
+    #[test]
+    fn callback_url_uses_fixed_port() {
+        assert_eq!(callback_url(), "http://localhost:5757/callback");
+    }
+
+    #[test]
+    fn create_and_get_all_roundtrip() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+
+        let configs = get_all(&conn).unwrap();
+        assert_eq!(configs.len(), 1);
+        let config = &configs[0];
+        assert_eq!(config.name, "my client");
+        assert_eq!(config.issuer_url, "http://localhost:9500");
+        assert_eq!(config.authorization_url, "http://localhost:9500/authorize");
+        assert_eq!(config.token_url, "http://localhost:9500/token");
+        assert_eq!(config.client_id, "client-abc");
+        assert_eq!(config.client_secret, "secret-xyz");
+        assert_eq!(config.scopes, "openid offline_access");
+        assert_eq!(config.grant_type, "authorization_code");
+        assert_eq!(config.extra_params, r#"{"audience":"api"}"#);
+        assert_eq!(config.disabled_params, r#"{"scope":true,"state":false}"#);
+        assert_eq!(config.disabled_token_params, r#"{"client_secret":true}"#);
+        assert_eq!(config.scopes_supported, "openid profile");
+        assert_eq!(config.refresh_token, "");
+        assert_eq!(config.disabled_refresh_params, r#"{"scope":true}"#);
+    }
+
+    #[test]
+    fn update_changes_fields() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+        let id = only_id(&conn);
+
+        let mut updated = sample_input();
+        updated.name = "renamed".to_string();
+        updated.grant_type = "client_credentials".to_string();
+        update(&conn, id, &updated).unwrap();
+
+        let config = &get_all(&conn).unwrap()[0];
+        assert_eq!(config.name, "renamed");
+        assert_eq!(config.grant_type, "client_credentials");
+    }
+
+    #[test]
+    fn delete_removes_config() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+        delete(&conn, only_id(&conn)).unwrap();
+        assert!(get_all(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn lookup_config_parses_json_blobs() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+
+        let resolved = lookup_config(&conn, only_id(&conn)).unwrap();
+        assert_eq!(resolved.grant_type, "authorization_code");
+        assert_eq!(
+            resolved.extra_params,
+            HashMap::from([("audience".to_string(), "api".to_string())])
+        );
+        // Only keys with value true make it into the disabled sets.
+        assert_eq!(resolved.disabled_params, HashSet::from(["scope".to_string()]));
+        assert_eq!(
+            resolved.disabled_token_params,
+            HashSet::from(["client_secret".to_string()])
+        );
+    }
+
+    #[test]
+    fn lookup_config_handles_empty_blobs() {
+        let conn = crate::db::open_test_connection();
+        let mut input = sample_input();
+        input.extra_params = String::new();
+        input.disabled_params = String::new();
+        input.disabled_token_params = String::new();
+        create(&conn, &input).unwrap();
+
+        let resolved = lookup_config(&conn, only_id(&conn)).unwrap();
+        assert!(resolved.extra_params.is_empty());
+        assert!(resolved.disabled_params.is_empty());
+        assert!(resolved.disabled_token_params.is_empty());
+    }
+
+    #[test]
+    fn lookup_config_unknown_id_is_error() {
+        let conn = crate::db::open_test_connection();
+        assert!(lookup_config(&conn, 42).is_err());
+    }
+
+    #[test]
+    fn save_and_lookup_refresh_token_roundtrip() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+        let id = only_id(&conn);
+
+        assert_eq!(lookup_refresh_token(&conn, id).unwrap(), "");
+        save_refresh_token(&conn, id, "rt-12345").unwrap();
+        assert_eq!(lookup_refresh_token(&conn, id).unwrap(), "rt-12345");
+    }
+
+    #[test]
+    fn lookup_disabled_refresh_params_parses_blob() {
+        let conn = crate::db::open_test_connection();
+        create(&conn, &sample_input()).unwrap();
+
+        let disabled = lookup_disabled_refresh_params(&conn, only_id(&conn)).unwrap();
+        assert_eq!(disabled, HashSet::from(["scope".to_string()]));
+    }
 }

@@ -2,7 +2,12 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 
-module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, ResourceAccess, init, resourceAccessDecoder, serverConfigDecoder, update, view)
+module ServerList exposing (Action(..), Client, Model, Msg(..), OAuthServer, ResourceAccess, findAvailable, init, nextPort, resourceAccessDecoder, serverConfigDecoder, update, view)
+
+{-| Server list: start/stop controls, per-server settings, live resource-access
+display, and each server's clients (with import into a client config).
+`port`/`issuerUrl` arrive pre-derived from the backend — no URL parsing here.
+-}
 
 import Dict exposing (Dict)
 import Html exposing (..)

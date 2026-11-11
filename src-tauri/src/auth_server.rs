@@ -1,6 +1,10 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+//! Server config CRUD and lifecycle: creating/deleting server configs and
+//! their clients, and starting/stopping the local OAuth servers they describe
+//! (the servers themselves are implemented in `oauth_server`).
+
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -318,4 +322,146 @@ fn extract_port(url: &str) -> Result<u16, String> {
         .ok_or_else(|| format!("Server URL '{}' does not contain a port", url))?;
     port.parse()
         .map_err(|e| format!("Invalid port in server URL '{}': {}", url, e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_runtime() -> RunningServers {
+        RunningServers::new(tokio::runtime::Runtime::new().expect("create runtime"))
+    }
+
+    #[test]
+    fn extract_port_parses_valid_urls() {
+        assert_eq!(extract_port("http://localhost:9500"), Ok(9500));
+        assert_eq!(extract_port("https://example.com:1234/path"), Ok(1234));
+        assert_eq!(extract_port("http://localhost:9500/authorize"), Ok(9500));
+    }
+
+    #[test]
+    fn extract_port_rejects_missing_scheme() {
+        assert!(extract_port("localhost:9500").is_err());
+        assert!(extract_port("ftp://localhost:9500").is_err());
+    }
+
+    #[test]
+    fn extract_port_rejects_missing_or_invalid_port() {
+        assert!(extract_port("http://localhost").is_err());
+        assert!(extract_port("http://localhost:abc").is_err());
+        assert!(extract_port("http://localhost:99999").is_err());
+    }
+
+    #[test]
+    fn create_and_get_all_roundtrip() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+
+        create(&conn, "my server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+
+        let configs = get_all(&conn, &running).unwrap();
+        assert_eq!(configs.len(), 1);
+        let config = &configs[0];
+        assert_eq!(config.config_name, "my server");
+        assert_eq!(config.auth_server_url, "http://localhost:9500");
+        assert_eq!(config.token_url, "http://localhost:9500/token");
+        assert_eq!(config.port, 9500);
+        assert_eq!(config.issuer_url, "http://localhost:9500");
+        assert!(!config.running);
+        assert!(config.clients.is_empty());
+        assert_eq!(config.redirect_url_override, "");
+        assert_eq!(config.access_token_expiry, 3600);
+        assert_eq!(config.refresh_token_expiry, 86400);
+    }
+
+    #[test]
+    fn get_all_reports_port_zero_for_unparseable_url() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+
+        create(&conn, "bad url", "not-a-url", "not-a-url/token").unwrap();
+
+        let configs = get_all(&conn, &running).unwrap();
+        assert_eq!(configs[0].port, 0);
+    }
+
+    #[test]
+    fn delete_removes_config() {
+        let conn = crate::db::open_test_connection();
+        let mut running = test_runtime();
+
+        create(&conn, "doomed", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let id = get_all(&conn, &running).unwrap()[0].id;
+
+        delete(&conn, &mut running, id).unwrap();
+        assert!(get_all(&conn, &running).unwrap().is_empty());
+    }
+
+    #[test]
+    fn add_client_generates_wellformed_credentials() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let server_id = get_all(&conn, &running).unwrap()[0].id;
+
+        add_client(&conn, server_id).unwrap();
+
+        let configs = get_all(&conn, &running).unwrap();
+        assert_eq!(configs[0].clients.len(), 1);
+        let client = &configs[0].clients[0];
+        assert_eq!(client.auth_server_id, server_id);
+        assert_eq!(client.client_id.len(), 24);
+        assert_eq!(client.client_secret.len(), 48);
+        assert!(client.client_id.chars().all(|c| c.is_ascii_alphanumeric()));
+        assert!(client.client_secret.chars().all(|c| c.is_ascii_alphanumeric()));
+    }
+
+    #[test]
+    fn delete_client_removes_row() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let server_id = get_all(&conn, &running).unwrap()[0].id;
+        add_client(&conn, server_id).unwrap();
+        let client_db_id = get_all(&conn, &running).unwrap()[0].clients[0].id;
+
+        delete_client(&conn, client_db_id).unwrap();
+        assert!(get_all(&conn, &running).unwrap()[0].clients.is_empty());
+    }
+
+    #[test]
+    fn update_settings_roundtrip() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let id = get_all(&conn, &running).unwrap()[0].id;
+
+        update_settings(&conn, id, "http://localhost:8080/cb", 120, 7200).unwrap();
+
+        let config = &get_all(&conn, &running).unwrap()[0];
+        assert_eq!(config.redirect_url_override, "http://localhost:8080/cb");
+        assert_eq!(config.access_token_expiry, 120);
+        assert_eq!(config.refresh_token_expiry, 7200);
+    }
+
+    #[test]
+    fn deleting_server_cascades_to_clients() {
+        let conn = crate::db::open_test_connection();
+        let mut running = test_runtime();
+
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let id = get_all(&conn, &running).unwrap()[0].id;
+        add_client(&conn, id).unwrap();
+        add_client(&conn, id).unwrap();
+
+        delete(&conn, &mut running, id).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM auth_server_clients", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
 }

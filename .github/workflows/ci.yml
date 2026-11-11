@@ -7,7 +7,7 @@ on:
 
 jobs:
   rust:
-    name: Rust (clippy)
+    name: Rust (clippy + test)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,14 +20,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
+      - name: Test
+        run: cargo test
+        working-directory: src-tauri
 
   elm:
-    name: Elm (build)
+    name: Elm (build + test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Install Elm
-        run: npm install -g elm@0.19.1-6
+        run: npm install -g elm@0.19.1-6 elm-test@0.19.1-revision12
       - name: Build
         run: elm make src/Main.elm --output /dev/null
+        working-directory: ui
+      - name: Test
+        run: elm-test
         working-directory: ui
