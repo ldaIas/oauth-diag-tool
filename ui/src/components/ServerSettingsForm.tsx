@@ -35,6 +35,13 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
         value={edit.refreshTokenExpiry}
         onChange={(refreshTokenExpiry) => onEdit({ refreshTokenExpiry })}
       />
+      <label className="settings-checkbox">
+        <input type="checkbox" checked={edit.userBased} onChange={(e) => onEdit({ userBased: e.target.checked })} />
+        <span className="detail-label">User-based access</span>
+      </label>
+      <div className="settings-hint">
+        When on, /authorize shows a login page where a user signs in or creates an account, and tokens carry that user.
+      </div>
       <div className="settings-actions">
         {saved && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
         <button className="btn-save-settings" disabled={saved} onClick={onSave}>

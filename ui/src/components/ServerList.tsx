@@ -1,10 +1,12 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { OAuthClient, ServerConfig } from "../bindings";
+import type { ReactNode } from "react";
+import type { OAuthClient, ServerConfig, ServerUser } from "../bindings";
 import type { ServerListUi } from "../hooks/useServerListUi";
 import type { ImportedClientFields } from "../lib/clientConfigForm";
 import { nextPort } from "../lib/ports";
+import { canSaveUserEdit, defaultUserData, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
 import { ServerSettingsForm } from "./ServerSettingsForm";
 import { chevron, Detail } from "./shared";
@@ -111,6 +113,7 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
         )}
       </div>
       <ResourceSection issuerUrl={server.issuerUrl} access={resourceAccess[server.id]} />
+      {(server.users.length > 0 || server.userBased) && <UsersSection server={server} ui={ui} />}
       <div className="client-section">
         <div className="client-section-header">
           <span className="expandable-toggle" onClick={() => ui.toggleClients(server.id)}>
@@ -155,6 +158,7 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
       ) : (
         <div className="resource-details">
           <Detail label="Last Client" value={access.clientId === "" ? "—" : access.clientId} />
+          <Detail label="Last User" value={access.username ?? "—"} />
           <Detail label="Status" value={access.status === 200 ? "200 OK" : String(access.status)} />
           {access.error === null ? <Detail label="Result" value="Success" /> : <Detail label="Error" value={access.error} />}
           <Detail label="Time" value={access.timestamp} />
@@ -182,6 +186,165 @@ function ClientCard({ client, onImport, onDelete }: { client: OAuthClient; onImp
         <Detail label="Client ID" value={client.clientId} />
         <Detail label="Secret" value={client.clientSecret} />
       </div>
+    </div>
+  );
+}
+
+function UsersSection({ server, ui }: { server: ServerConfig; ui: ServerListUi }) {
+  const expanded = ui.expandedUsers.has(server.id);
+  const draft = ui.addUserDrafts[server.id];
+  return (
+    <div className="client-section">
+      <div className="client-section-header">
+        <span className="expandable-toggle" onClick={() => ui.toggleUsers(server.id)}>
+          {`${chevron(expanded)} Users (${server.users.length})`}
+        </span>
+        <button className="btn-add-client" onClick={() => ui.openAddUser(server.id)}>
+          + Add User
+        </button>
+      </div>
+      {expanded && (
+        <>
+          {draft !== undefined && (
+            <AddUserForm
+              draft={draft}
+              error={ui.addUserErrors[server.id]}
+              onEdit={(patch) => ui.editAddUser(server.id, patch)}
+              onSubmit={() => void ui.submitAddUser(server.id)}
+              onCancel={() => ui.closeAddUser(server.id)}
+            />
+          )}
+          {server.users.length === 0 ? (
+            draft === undefined && <div className="client-empty">No users</div>
+          ) : (
+            <div className="client-list">
+              {server.users.map((user) => (
+                <UserCard
+                  key={user.id}
+                  user={user}
+                  edit={ui.userEditOf(user)}
+                  saved={ui.savedUsers.has(user.id)}
+                  onEdit={(patch) => ui.editUser(user, patch)}
+                  onSave={() => void ui.saveUser(user)}
+                  onDelete={() => ui.deleteUser(user.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function AddUserForm({
+  draft,
+  error,
+  onEdit,
+  onSubmit,
+  onCancel,
+}: {
+  draft: AddUserDraft;
+  error: string | undefined;
+  onEdit: (patch: Partial<AddUserDraft>) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="user-form">
+      <UserField label="Username">
+        <input
+          className="form-input settings-input"
+          type="text"
+          value={draft.username}
+          onChange={(e) => onEdit({ username: e.target.value })}
+        />
+      </UserField>
+      <UserField label="Password">
+        <input
+          className="form-input settings-input"
+          type="text"
+          value={draft.password}
+          onChange={(e) => onEdit({ password: e.target.value })}
+        />
+      </UserField>
+      <UserField label="User Data">
+        <textarea
+          className="form-input settings-input user-data-input"
+          placeholder={defaultUserData(draft.username === "" ? "<username>" : draft.username)}
+          value={draft.userData}
+          onChange={(e) => onEdit({ userData: e.target.value })}
+        />
+      </UserField>
+      {error !== undefined && <div className="user-form-error">{error}</div>}
+      <div className="settings-actions user-form-actions">
+        <button className="btn-import" onClick={onCancel}>
+          Cancel
+        </button>
+        <button className="btn-save-settings" onClick={onSubmit}>
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserCard({
+  user,
+  edit,
+  saved,
+  onEdit,
+  onSave,
+  onDelete,
+}: {
+  user: ServerUser;
+  edit: UserEdit;
+  saved: boolean;
+  onEdit: (patch: Partial<UserEdit>) => void;
+  onSave: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="client-card">
+      <div className="client-card-header">
+        <span className="user-name">{user.username}</span>
+        <div className="client-card-actions">
+          <button className="btn-delete" onClick={onDelete}>
+            {"\u{1F5D1}"}
+          </button>
+        </div>
+      </div>
+      <UserField label="Password">
+        <input
+          className="form-input settings-input"
+          type="text"
+          value={edit.password}
+          onChange={(e) => onEdit({ password: e.target.value })}
+        />
+      </UserField>
+      <UserField label="User Data">
+        <textarea
+          className="form-input settings-input user-data-input"
+          placeholder={defaultUserData(user.username)}
+          value={edit.userData}
+          onChange={(e) => onEdit({ userData: e.target.value })}
+        />
+      </UserField>
+      <div className="settings-actions">
+        {saved && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
+        <button className="btn-save-settings" disabled={saved || !canSaveUserEdit(edit)} onClick={onSave}>
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function UserField({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="settings-field">
+      <span className="detail-label">{label}</span>
+      {children}
     </div>
   );
 }

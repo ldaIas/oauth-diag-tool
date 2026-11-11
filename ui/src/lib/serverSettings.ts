@@ -8,12 +8,14 @@ export interface SettingsEdit {
   redirectUrlOverride: string;
   accessTokenExpiry: string;
   refreshTokenExpiry: string;
+  userBased: boolean;
 }
 
 export interface ServerSettings {
   redirectUrlOverride: string;
   accessTokenExpiry: number;
   refreshTokenExpiry: number;
+  userBased: boolean;
 }
 
 const DEFAULT_ACCESS_TOKEN_EXPIRY = 3600;
@@ -29,6 +31,7 @@ export function settingsEditFor(server: ServerConfig): SettingsEdit {
     redirectUrlOverride: server.redirectUrlOverride,
     accessTokenExpiry: String(server.accessTokenExpiry),
     refreshTokenExpiry: String(server.refreshTokenExpiry),
+    userBased: server.userBased,
   };
 }
 
@@ -37,5 +40,6 @@ export function toServerSettings(edit: SettingsEdit): ServerSettings {
     redirectUrlOverride: edit.redirectUrlOverride,
     accessTokenExpiry: parseIntOr(edit.accessTokenExpiry, DEFAULT_ACCESS_TOKEN_EXPIRY),
     refreshTokenExpiry: parseIntOr(edit.refreshTokenExpiry, DEFAULT_REFRESH_TOKEN_EXPIRY),
+    userBased: edit.userBased,
   };
 }

@@ -122,9 +122,45 @@ fn update_server_settings(
     redirect_url_override: String,
     access_token_expiry: i64,
     refresh_token_expiry: i64,
+    user_based: bool,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_server::update_settings(&conn, id, &redirect_url_override, access_token_expiry, refresh_token_expiry)
+    auth_server::update_settings(&conn, id, &redirect_url_override, access_token_expiry, refresh_token_expiry, user_based)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn add_user_to_server(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    server_id: i64,
+    username: String,
+    password: String,
+    user_data: Option<String>,
+) -> Result<(), String> {
+    let conn = state.lock().map_err(|e| e.to_string())?;
+    auth_server::add_user(&conn, server_id, &username, &password, user_data.as_deref())
+}
+
+#[tauri::command]
+#[specta::specta]
+fn update_user(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+    password: String,
+    user_data: String,
+) -> Result<(), String> {
+    let conn = state.lock().map_err(|e| e.to_string())?;
+    auth_server::update_user(&conn, id, &password, &user_data)
+}
+
+#[tauri::command]
+#[specta::specta]
+fn delete_user(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = state.lock().map_err(|e| e.to_string())?;
+    auth_server::delete_user(&conn, id)
 }
 
 #[tauri::command]
@@ -278,6 +314,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             update_client_config,
             delete_client_config,
             update_server_settings,
+            add_user_to_server,
+            update_user,
+            delete_user,
             start_server,
             stop_server,
             get_callback_url,
@@ -286,7 +325,10 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             cancel_authorization,
             fetch_server_metadata,
         ])
-        .events(tauri_specta::collect_events![oauth_server::ResourceAccessInfo])
+        .events(tauri_specta::collect_events![
+            oauth_server::ResourceAccessInfo,
+            oauth_server::ServerUsersChanged
+        ])
         // The only i64s crossing the bridge are SQLite row IDs and token expiries
         // in seconds, far below 2^53.
         .dangerously_cast_bigints_to_number()

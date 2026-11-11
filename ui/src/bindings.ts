@@ -14,7 +14,10 @@ export const commands = {
 	createClientConfig: (config: ClientConfigInput) => typedError<null, string>(__TAURI_INVOKE("create_client_config", { config })),
 	updateClientConfig: (id: number, config: ClientConfigInput) => typedError<null, string>(__TAURI_INVOKE("update_client_config", { id, config })),
 	deleteClientConfig: (id: number) => typedError<null, string>(__TAURI_INVOKE("delete_client_config", { id })),
-	updateServerSettings: (id: number, redirectUrlOverride: string, accessTokenExpiry: number, refreshTokenExpiry: number) => typedError<null, string>(__TAURI_INVOKE("update_server_settings", { id, redirectUrlOverride, accessTokenExpiry, refreshTokenExpiry })),
+	updateServerSettings: (id: number, redirectUrlOverride: string, accessTokenExpiry: number, refreshTokenExpiry: number, userBased: boolean) => typedError<null, string>(__TAURI_INVOKE("update_server_settings", { id, redirectUrlOverride, accessTokenExpiry, refreshTokenExpiry, userBased })),
+	addUserToServer: (serverId: number, username: string, password: string, userData: string | null) => typedError<null, string>(__TAURI_INVOKE("add_user_to_server", { serverId, username, password, userData })),
+	updateUser: (id: number, password: string, userData: string) => typedError<null, string>(__TAURI_INVOKE("update_user", { id, password, userData })),
+	deleteUser: (id: number) => typedError<null, string>(__TAURI_INVOKE("delete_user", { id })),
 	startServer: (id: number) => typedError<null, string>(__TAURI_INVOKE("start_server", { id })),
 	stopServer: (id: number) => typedError<null, string>(__TAURI_INVOKE("stop_server", { id })),
 	getCallbackUrl: () => __TAURI_INVOKE<string>("get_callback_url"),
@@ -27,6 +30,7 @@ export const commands = {
 /** Events */
 export const events = {
 	resourceAccess: makeEvent<ResourceAccessInfo_Serialize, ResourceAccessInfo_Deserialize>("resource-access"),
+	serverUsersChanged: makeEvent<ServerUsersChanged, ServerUsersChanged>("server-users-changed"),
 };
 
 /* Types */
@@ -86,6 +90,8 @@ export type ResourceAccessInfo_Deserialize = {
 	status: number,
 	error?: string | null,
 	timestamp: string,
+	/**  User the token was issued to; None for client_credentials tokens */
+	username?: string | null,
 };
 
 export type ResourceAccessInfo_Serialize = {
@@ -94,6 +100,8 @@ export type ResourceAccessInfo_Serialize = {
 	status: number,
 	error: string | null,
 	timestamp: string,
+	/**  User the token was issued to; None for client_credentials tokens */
+	username: string | null,
 };
 
 export type ServerConfig = {
@@ -109,6 +117,9 @@ export type ServerConfig = {
 	redirectUrlOverride: string,
 	accessTokenExpiry: number,
 	refreshTokenExpiry: number,
+	/**  When true, the authorize endpoint requires signing in as one of `users` */
+	userBased: boolean,
+	users: ServerUser[],
 };
 
 export type ServerMetadataResponse = {
@@ -116,6 +127,19 @@ export type ServerMetadataResponse = {
 	authorizationEndpoint: string,
 	tokenEndpoint: string,
 	scopesSupported: string,
+};
+
+export type ServerUser = {
+	id: number,
+	username: string,
+	password: string,
+	userData: string,
+	authServerId: number,
+};
+
+/**  Emitted when a user registers through the login page so the UI can reload its user list. */
+export type ServerUsersChanged = {
+	serverId: number,
 };
 
 /* Tauri Specta runtime */

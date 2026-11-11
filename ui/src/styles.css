@@ -498,6 +498,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .settings-actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   padding-top: 4px;
 }
@@ -924,4 +926,42 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .form-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.settings-checkbox input { accent-color: var(--accent); cursor: pointer; }
+
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 0 0 6px 16px;
+  background: var(--bg);
+  border: 1px dashed var(--border-hi);
+  border-radius: 4px;
+}
+
+.user-form-error {
+  font-size: 10px;
+  color: var(--danger);
+  letter-spacing: 0.04em;
+}
+
+.user-name {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.user-data-input {
+  min-height: 56px;
+  resize: vertical;
+  line-height: 1.4;
 }
