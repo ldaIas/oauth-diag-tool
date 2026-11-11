@@ -7,16 +7,18 @@ description: Open a PR for the current branch and log it in CHANGELOG.md. Use wh
 
 The PR number is needed for the changelog entry, so the PR is created first as a draft and the changelog is updated afterwards.
 
-1. **Draft PR.** Push the branch and run `gh pr create --draft`, filling in `.github/pull_request_template.md`. Leave the changelog checkbox unchecked for now. Target `main`, or the parent branch if this PR is part of a stack.
-2. **Get the link.** Read the number and URL from the `gh pr create` output (or `gh pr view --json number,url`).
-3. **Changelog entry.** Under `## [Unreleased]` in `CHANGELOG.md`, add one line:
+1. **Sync first.** Run `git fetch origin` and merge the base branch (`origin/main`, or the parent branch for a stacked PR) into the branch. Every PR edits `[Unreleased]`, so changelog conflicts are routine. Resolve them by keeping every entry from both sides, with this PR's entry last, then commit the merge.
+2. **Draft PR.** Push the branch and run `gh pr create --draft`, filling in `.github/pull_request_template.md`. Leave the changelog checkbox unchecked for now. Target `main`, or the parent branch if this PR is part of a stack.
+3. **Get the link.** Read the number and URL from the `gh pr create` output (or `gh pr view --json number,url`).
+4. **Changelog entry.** Under `## [Unreleased]` in `CHANGELOG.md`, add one line:
 
    ```
    - <short description of the change> [PR](<pr url>)
    ```
 
    Match the style of the existing entries. Keep a single line, and nest sub-bullets only for breaking changes (mark those `**BREAKING CHANGE**`).
-4. **Push the changelog.** Commit it separately (for example `update changelog for #<n>`) and push. Check the changelog box in the PR description with `gh pr edit`.
-5. **Ready for review.** Run `gh pr ready` once the user confirms.
+5. **Push the changelog.** Commit it separately (for example `update changelog for #<n>`) and push. Check the changelog box in the PR description with `gh pr edit`.
+6. **Re-sync.** Fetch and merge the base branch again, since other PRs may have landed since step 1, and resolve any conflicts the same way. Push, then confirm `gh pr view --json mergeable` reports `MERGEABLE` (GitHub can take a few seconds to recompute).
+7. **Ready for review.** Run `gh pr ready` only when the branch is conflict-free and the user confirms. Never merge with unresolved conflict markers.
 
 Do not bump versions or tag here. Releases are cut separately: a version-bump PR that moves `[Unreleased]` entries under the new version, then `git tag vX.Y.Z && git push origin vX.Y.Z` from `main`.
