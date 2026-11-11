@@ -1,6 +1,12 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+//! The local OAuth authorization server (Axum, bound to 127.0.0.1): consent
+//! page, token endpoint (client_credentials / authorization_code / refresh_token,
+//! PKCE), a sample protected `/resource`, and OIDC discovery. Access tokens are
+//! JWTs signed with a per-server HMAC key; auth codes and refresh tokens live
+//! in memory with TTLs.
+
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
@@ -16,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+use tauri_specta::Event;
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -40,8 +47,9 @@ pub struct ServerState {
     pub app_handle: AppHandle,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type, tauri_specta::Event)]
 #[serde(rename_all = "camelCase")]
+#[tauri_specta(event_name = "resource-access")]
 pub struct ResourceAccessInfo {
     pub server_id: i64,
     pub client_id: String,
@@ -50,6 +58,9 @@ pub struct ResourceAccessInfo {
     pub timestamp: String,
 }
 
+/// How long an issued authorization code stays valid.
+const AUTH_CODE_TTL_SECS: i64 = 600;
+
 #[derive(Clone)]
 pub struct AuthCodeEntry {
     pub client_id: String,
@@ -57,6 +68,7 @@ pub struct AuthCodeEntry {
     pub scope: String,
     pub code_challenge: Option<String>,
     pub code_challenge_method: Option<String>,
+    pub expires_at: i64,
 }
 
 #[derive(Clone)]
@@ -170,33 +182,20 @@ async fn authorize_endpoint(
     let code_challenge = params.code_challenge.as_deref().unwrap_or("");
     let code_challenge_method = params.code_challenge_method.as_deref().unwrap_or("");
 
-    // Validate that the client_id exists for this server
-    let client_exists = {
-        let conn = state.db.lock().map_err(|_| server_error())?;
-        let mut stmt = conn
-            .prepare("SELECT COUNT(*) FROM auth_server_clients WHERE auth_server_id = ?1 AND client_id = ?2")
-            .map_err(|_| server_error())?;
-        let count: i64 = stmt
-            .query_row(rusqlite::params![state.server_id, client_id], |row| row.get(0))
-            .map_err(|_| server_error())?;
-        count > 0
-    };
-
-    if !client_exists {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(ErrorResponse {
-                error: "invalid_client".to_string(),
-                error_description: "Unknown client_id".to_string(),
-            }),
-        ));
-    }
+    ensure_client_exists(&state, client_id)?;
 
     // Apply redirect URL override if configured
     let effective_redirect_uri = match &state.redirect_url_override {
         Some(override_url) => override_url.as_str(),
         None => redirect_uri,
     };
+
+    let client_id = html_escape(client_id);
+    let scope = html_escape(scope);
+    let request_state = html_escape(request_state);
+    let code_challenge = html_escape(code_challenge);
+    let code_challenge_method = html_escape(code_challenge_method);
+    let effective_redirect_uri = html_escape(effective_redirect_uri);
 
     // Render a simple consent page
     let html = format!(
@@ -260,12 +259,32 @@ async fn authorize_submit(
         .collect();
 
     let client_id = params.get("client_id").cloned().unwrap_or_default();
-    let redirect_uri = params.get("redirect_uri").cloned().unwrap_or_default();
     let request_state = params.get("state").cloned().unwrap_or_default();
     let action = params.get("action").cloned().unwrap_or_default();
     let scope = params.get("scope").cloned().unwrap_or_default();
     let code_challenge = params.get("code_challenge").cloned().unwrap_or_default();
     let code_challenge_method = params.get("code_challenge_method").cloned().unwrap_or_default();
+
+    // The consent form's hidden fields are attacker-controllable; re-validate the
+    // client and re-apply the redirect override rather than trusting them.
+    ensure_client_exists(&state, &client_id)?;
+
+    let redirect_uri = match &state.redirect_url_override {
+        Some(override_url) => override_url.clone(),
+        None => params.get("redirect_uri").cloned().unwrap_or_default(),
+    };
+
+    // Clients are not registered with redirect URIs in this tool, so any absolute
+    // http(s) URL is accepted — but reject anything else (javascript:, relative, …).
+    if !redirect_uri.starts_with("http://") && !redirect_uri.starts_with("https://") {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_request".to_string(),
+                error_description: "redirect_uri must be an absolute http(s) URL".to_string(),
+            }),
+        ));
+    }
 
     if action == "deny" {
         let mut redirect = form_urlencoded::Serializer::new(String::new());
@@ -279,16 +298,20 @@ async fn authorize_submit(
 
     // Generate an authorization code
     let code = uuid::Uuid::new_v4().to_string();
+    let now = Utc::now().timestamp();
 
-    // Store the code mapping (now includes scope for refresh token decision)
     {
         let mut codes = state.auth_codes.lock().map_err(|_| server_error())?;
+        // Abandoned flows never consume their codes; drop expired ones here so the
+        // map doesn't grow without bound.
+        codes.retain(|_, entry| entry.expires_at > now);
         codes.insert(code.clone(), AuthCodeEntry {
             client_id: client_id.clone(),
             redirect_uri: redirect_uri.clone(),
             scope: scope.clone(),
             code_challenge: if code_challenge.is_empty() { None } else { Some(code_challenge) },
             code_challenge_method: if code_challenge_method.is_empty() { None } else { Some(code_challenge_method) },
+            expires_at: now + AUTH_CODE_TTL_SECS,
         });
     }
 
@@ -361,9 +384,12 @@ fn create_refresh_token(
     scope: &str,
 ) -> Result<String, (StatusCode, Json<ErrorResponse>)> {
     let token = uuid::Uuid::new_v4().to_string();
-    let expires_at = Utc::now().timestamp() + state.refresh_token_expiry as i64;
+    let now = Utc::now().timestamp();
+    let expires_at = now + state.refresh_token_expiry as i64;
 
     let mut tokens = state.refresh_tokens.lock().map_err(|_| server_error())?;
+    // Expired tokens are otherwise only removed when a client tries to use them.
+    tokens.retain(|_, entry| entry.expires_at > now);
     tokens.insert(token.clone(), RefreshTokenEntry {
         client_id: client_id.to_string(),
         scope: scope.to_string(),
@@ -375,6 +401,26 @@ fn create_refresh_token(
 
 fn has_offline_access(scope: &str) -> bool {
     scope.split_whitespace().any(|s| s == "offline_access")
+}
+
+/// Ok(true) = verifier matches the challenge, Ok(false) = mismatch,
+/// Err(method) = unsupported code_challenge_method.
+fn verify_pkce(
+    expected_challenge: &str,
+    method: &str,
+    code_verifier: &str,
+) -> Result<bool, String> {
+    let computed_challenge = match method {
+        "S256" => {
+            let mut hasher = Sha256::new();
+            hasher.update(code_verifier.as_bytes());
+            let digest = hasher.finalize();
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+        }
+        "plain" => code_verifier.to_string(),
+        _ => return Err(method.to_string()),
+    };
+    Ok(computed_challenge == expected_challenge)
 }
 
 fn token_client_credentials(
@@ -444,13 +490,15 @@ fn token_authorization_code(
         codes.remove(code)
     };
 
-    let entry = entry.ok_or_else(|| (
-        StatusCode::BAD_REQUEST,
-        Json(ErrorResponse {
-            error: "invalid_grant".to_string(),
-            error_description: "Invalid or expired authorization code".to_string(),
-        }),
-    ))?;
+    let entry = entry
+        .filter(|e| e.expires_at > Utc::now().timestamp())
+        .ok_or_else(|| (
+            StatusCode::BAD_REQUEST,
+            Json(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "Invalid or expired authorization code".to_string(),
+            }),
+        ))?;
 
     // Validate redirect_uri matches
     if !redirect_uri.is_empty() && redirect_uri != entry.redirect_uri {
@@ -476,15 +524,18 @@ fn token_authorization_code(
             ))?;
 
         let method = entry.code_challenge_method.as_deref().unwrap_or("plain");
-        let computed_challenge = match method {
-            "S256" => {
-                let mut hasher = Sha256::new();
-                hasher.update(code_verifier.as_bytes());
-                let digest = hasher.finalize();
-                base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+        match verify_pkce(expected_challenge, method, code_verifier) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Err((
+                    StatusCode::BAD_REQUEST,
+                    Json(ErrorResponse {
+                        error: "invalid_grant".to_string(),
+                        error_description: "PKCE code_verifier does not match code_challenge".to_string(),
+                    }),
+                ));
             }
-            "plain" => code_verifier.to_string(),
-            _ => {
+            Err(method) => {
                 return Err((
                     StatusCode::BAD_REQUEST,
                     Json(ErrorResponse {
@@ -493,16 +544,6 @@ fn token_authorization_code(
                     }),
                 ));
             }
-        };
-
-        if computed_challenge != *expected_challenge {
-            return Err((
-                StatusCode::BAD_REQUEST,
-                Json(ErrorResponse {
-                    error: "invalid_grant".to_string(),
-                    error_description: "PKCE code_verifier does not match code_challenge".to_string(),
-                }),
-            ));
         }
     }
 
@@ -633,6 +674,40 @@ fn token_refresh(
     }))
 }
 
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn ensure_client_exists(
+    state: &ServerState,
+    client_id: &str,
+) -> Result<(), (StatusCode, Json<ErrorResponse>)> {
+    let conn = state.db.lock().map_err(|_| server_error())?;
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM auth_server_clients WHERE auth_server_id = ?1 AND client_id = ?2",
+            rusqlite::params![state.server_id, client_id],
+            |row| row.get(0),
+        )
+        .map_err(|_| server_error())?;
+
+    if count > 0 {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Json(ErrorResponse {
+                error: "invalid_client".to_string(),
+                error_description: "Unknown client_id".to_string(),
+            }),
+        ))
+    }
+}
+
 fn validate_client(
     state: &ServerState,
     client_id: &str,
@@ -697,24 +772,41 @@ fn emit_resource_access(state: &ServerState, client_id: &str, status: u16, error
         error: error.map(|s| s.to_string()),
         timestamp: Utc::now().to_rfc3339(),
     };
-    let _ = state.app_handle.emit("resource-access", info);
+    let _ = info.emit(&state.app_handle);
+}
+
+fn resource_unauthorized(
+    state: &ServerState,
+    subject: &str,
+    www_authenticate: HeaderValue,
+    error: &str,
+    error_description: &str,
+) -> axum::response::Response {
+    emit_resource_access(state, subject, 401, Some(error_description));
+    (
+        StatusCode::UNAUTHORIZED,
+        [(axum::http::header::WWW_AUTHENTICATE, www_authenticate)],
+        Json(serde_json::json!({
+            "error": error,
+            "error_description": error_description
+        })),
+    )
+        .into_response()
 }
 
 async fn resource_endpoint(
     State(state): State<ServerState>,
     headers: HeaderMap,
-) -> impl IntoResponse {
+) -> axum::response::Response {
     let auth_header = match headers.get("authorization").and_then(|v| v.to_str().ok()) {
         Some(h) => h.to_string(),
         None => {
-            emit_resource_access(&state, "", 401, Some("Missing Authorization header"));
-            return (
-                StatusCode::UNAUTHORIZED,
-                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer error=\"missing_token\""))],
-                Json(serde_json::json!({
-                    "error": "invalid_request",
-                    "error_description": "Missing Authorization header"
-                })),
+            return resource_unauthorized(
+                &state,
+                "",
+                HeaderValue::from_static("Bearer error=\"missing_token\""),
+                "invalid_request",
+                "Missing Authorization header",
             );
         }
     };
@@ -722,23 +814,21 @@ async fn resource_endpoint(
     let token = match auth_header.strip_prefix("Bearer ") {
         Some(t) => t.to_string(),
         None => {
-            emit_resource_access(&state, "", 401, Some("Authorization header must use Bearer scheme"));
-            return (
-                StatusCode::UNAUTHORIZED,
-                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer error=\"invalid_request\""))],
-                Json(serde_json::json!({
-                    "error": "invalid_request",
-                    "error_description": "Authorization header must use Bearer scheme"
-                })),
+            return resource_unauthorized(
+                &state,
+                "",
+                HeaderValue::from_static("Bearer error=\"invalid_request\""),
+                "invalid_request",
+                "Authorization header must use Bearer scheme",
             );
         }
     };
 
     let resource_url = format!("{}/resource", state.issuer_url);
 
-    // First decode without audience validation to inspect claims on mismatch
+    // Decode without audience validation so a mismatched audience can be reported
+    // with the actual claim value below.
     let mut validation_no_aud = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
-    validation_no_aud.set_audience::<&str>(&[]);
     validation_no_aud.validate_aud = false;
 
     let token_data = match jsonwebtoken::decode::<JwtClaims>(
@@ -748,15 +838,12 @@ async fn resource_endpoint(
     ) {
         Ok(data) => data,
         Err(e) => {
-            let error_msg = format!("Token validation failed: {}", e);
-            emit_resource_access(&state, "", 401, Some(&error_msg));
-            return (
-                StatusCode::UNAUTHORIZED,
-                [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_str(&format!("Bearer error=\"invalid_token\"")).unwrap_or(HeaderValue::from_static("Bearer error=\"invalid_token\"")))],
-                Json(serde_json::json!({
-                    "error": "invalid_token",
-                    "error_description": error_msg
-                })),
+            return resource_unauthorized(
+                &state,
+                "",
+                HeaderValue::from_static("Bearer error=\"invalid_token\""),
+                "invalid_token",
+                &format!("Token validation failed: {}", e),
             );
         }
     };
@@ -764,25 +851,147 @@ async fn resource_endpoint(
     // Validate audience matches the resource endpoint
     let token_aud = token_data.claims.aud.as_deref().unwrap_or("");
     if token_aud != resource_url {
-        let error_msg = format!(
-            "Audience \"{}\" does not match resource identifier \"{}\"",
-            token_aud, resource_url
-        );
-        emit_resource_access(&state, &token_data.claims.sub, 401, Some(&error_msg));
-        return (
-            StatusCode::UNAUTHORIZED,
-            [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_str(&format!("Bearer error=\"invalid_token\"")).unwrap_or(HeaderValue::from_static("Bearer error=\"invalid_token\"")))],
-            Json(serde_json::json!({
-                "error": "invalid_token",
-                "error_description": error_msg
-            })),
+        return resource_unauthorized(
+            &state,
+            &token_data.claims.sub,
+            HeaderValue::from_static("Bearer error=\"invalid_token\""),
+            "invalid_token",
+            &format!(
+                "Audience \"{}\" does not match resource identifier \"{}\"",
+                token_aud, resource_url
+            ),
         );
     }
 
     emit_resource_access(&state, &token_data.claims.sub, 200, None);
     (
         StatusCode::OK,
-        [(axum::http::header::WWW_AUTHENTICATE, HeaderValue::from_static(""))],
         Json(serde_json::to_value(&token_data.claims).unwrap_or_default()),
     )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s256_challenge(verifier: &str) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(verifier.as_bytes());
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(hasher.finalize())
+    }
+
+    #[test]
+    fn html_escape_escapes_all_special_characters() {
+        assert_eq!(
+            html_escape(r#"<a href="x" onclick='y'>&</a>"#),
+            "&lt;a href=&quot;x&quot; onclick=&#39;y&#39;&gt;&amp;&lt;/a&gt;"
+        );
+    }
+
+    #[test]
+    fn html_escape_leaves_plain_text_untouched() {
+        assert_eq!(html_escape(""), "");
+        assert_eq!(html_escape("plain text 123"), "plain text 123");
+    }
+
+    #[test]
+    fn has_offline_access_matches_exact_scope_token() {
+        assert!(has_offline_access("offline_access"));
+        assert!(has_offline_access("openid profile offline_access email"));
+        assert!(!has_offline_access("offline_access2"));
+        assert!(!has_offline_access("my_offline_access"));
+        assert!(!has_offline_access(""));
+    }
+
+    #[test]
+    fn verify_pkce_s256_accepts_matching_verifier() {
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        assert_eq!(verify_pkce(&s256_challenge(verifier), "S256", verifier), Ok(true));
+    }
+
+    #[test]
+    fn verify_pkce_s256_rejects_wrong_verifier() {
+        let challenge = s256_challenge("correct-verifier");
+        assert_eq!(verify_pkce(&challenge, "S256", "wrong-verifier"), Ok(false));
+    }
+
+    #[test]
+    fn verify_pkce_plain_compares_directly() {
+        assert_eq!(verify_pkce("abc123", "plain", "abc123"), Ok(true));
+        assert_eq!(verify_pkce("abc123", "plain", "xyz789"), Ok(false));
+    }
+
+    #[test]
+    fn verify_pkce_rejects_unsupported_method() {
+        assert_eq!(
+            verify_pkce("whatever", "S512", "whatever"),
+            Err("S512".to_string())
+        );
+    }
+
+    fn body_params(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn extract_credentials_from_body_requires_both_fields() {
+        let params = body_params(&[("client_secret", "s3cret"), ("client_id", "my-client")]);
+        assert_eq!(
+            extract_credentials_from_body(&params),
+            Some(("my-client".to_string(), "s3cret".to_string()))
+        );
+
+        let only_id = body_params(&[("client_id", "my-client")]);
+        assert_eq!(extract_credentials_from_body(&only_id), None);
+
+        let only_secret = body_params(&[("client_secret", "s3cret")]);
+        assert_eq!(extract_credentials_from_body(&only_secret), None);
+
+        assert_eq!(extract_credentials_from_body(&[]), None);
+    }
+
+    fn headers_with_authorization(value: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", HeaderValue::from_str(value).unwrap());
+        headers
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_decodes_valid_header() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("my-client:s3cret");
+        let headers = headers_with_authorization(&format!("Basic {}", encoded));
+        assert_eq!(
+            extract_credentials_from_basic_auth(&headers),
+            Some(("my-client".to_string(), "s3cret".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_splits_on_first_colon() {
+        let encoded = base64::engine::general_purpose::STANDARD.encode("id:se:cr:et");
+        let headers = headers_with_authorization(&format!("Basic {}", encoded));
+        assert_eq!(
+            extract_credentials_from_basic_auth(&headers),
+            Some(("id".to_string(), "se:cr:et".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_credentials_from_basic_auth_rejects_bad_input() {
+        assert_eq!(extract_credentials_from_basic_auth(&HeaderMap::new()), None);
+
+        let bearer = headers_with_authorization("Bearer sometoken");
+        assert_eq!(extract_credentials_from_basic_auth(&bearer), None);
+
+        let bad_base64 = headers_with_authorization("Basic !!!not-base64!!!");
+        assert_eq!(extract_credentials_from_basic_auth(&bad_base64), None);
+
+        let no_colon = base64::engine::general_purpose::STANDARD.encode("nocolonhere");
+        let headers = headers_with_authorization(&format!("Basic {}", no_colon));
+        assert_eq!(extract_credentials_from_basic_auth(&headers), None);
+    }
 }
