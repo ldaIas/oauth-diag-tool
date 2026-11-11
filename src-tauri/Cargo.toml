@@ -6,7 +6,7 @@ authors = ["Sam Sovereign"]
 license = "Apache-2.0"
 repository = "https://github.com/ldaIas/oauth-diag-tool"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.85"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -15,13 +15,13 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.5.6", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.10.3", features = ["devtools"] }
+tauri = { version = "2.12.5", features = ["devtools"] }
 tauri-plugin-log = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 rand = "0.8"
@@ -37,6 +37,10 @@ chrono = { version = "0.4", features = ["serde"] }
 tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2"
 tauri-plugin-dialog = "2"
+# Pre-release crates: exact pins keep the three in lockstep.
+specta = { version = "=2.0.0-rc.26", features = ["derive"] }
+specta-typescript = "=0.0.13"
+tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
 
 [dev-dependencies]
 tempfile = "3"

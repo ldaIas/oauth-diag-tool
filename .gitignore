@@ -20,6 +20,6 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Elm files
-elm-stuff/
-ui/dist/main.js
+# Frontend
+ui/node_modules/
+ui/dist/

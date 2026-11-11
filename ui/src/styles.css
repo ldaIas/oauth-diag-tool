@@ -4,7 +4,7 @@
   font-style: normal;
   font-weight: 100 800;
   font-display: swap;
-  src: url('fonts/jetbrains-mono-latin.woff2') format('woff2');
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

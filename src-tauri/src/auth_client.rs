@@ -21,7 +21,7 @@ use axum::{
 
 const CALLBACK_PORT: u16 = 5757;
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
     pub id: i64,
@@ -42,7 +42,7 @@ pub struct ClientConfig {
 }
 
 /// Field payload shared by the create and update client-config commands.
-#[derive(Deserialize)]
+#[derive(Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfigInput {
     pub name: String,
@@ -73,7 +73,7 @@ pub struct ResolvedClientConfig {
     pub disabled_token_params: HashSet<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerMetadataResponse {
     pub body: String,
@@ -82,7 +82,7 @@ pub struct ServerMetadataResponse {
     pub scopes_supported: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AuthResponse {
     pub status_code: u16,

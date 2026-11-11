@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
+use tauri_specta::Event;
 
 #[derive(Clone)]
 pub struct ServerState {
@@ -46,8 +47,9 @@ pub struct ServerState {
     pub app_handle: AppHandle,
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, specta::Type, tauri_specta::Event)]
 #[serde(rename_all = "camelCase")]
+#[tauri_specta(event_name = "resource-access")]
 pub struct ResourceAccessInfo {
     pub server_id: i64,
     pub client_id: String,
@@ -770,7 +772,7 @@ fn emit_resource_access(state: &ServerState, client_id: &str, status: u16, error
         error: error.map(|s| s.to_string()),
         timestamp: Utc::now().to_rfc3339(),
     };
-    let _ = state.app_handle.emit("resource-access", info);
+    let _ = info.emit(&state.app_handle);
 }
 
 fn resource_unauthorized(

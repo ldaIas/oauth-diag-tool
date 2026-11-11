@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 
 use crate::oauth_server;
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClient {
     pub id: i64,
@@ -25,7 +25,7 @@ pub struct OAuthClient {
     pub auth_server_id: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     pub id: i64,

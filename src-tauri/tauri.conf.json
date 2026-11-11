@@ -5,11 +5,12 @@
   "identifier": "com.ldaIas.oauth-diag-tool",
   "build": {
     "frontendDist": "../ui/dist",
-    "beforeDevCommand": "cd ui && elm make src/Main.elm --output dist/main.js",
-    "beforeBuildCommand": "cd ui && elm make src/Main.elm --optimize --output dist/main.js"
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "withGlobalTauri": true,
+    "withGlobalTauri": false,
     "windows": [
       {
         "title": "OAuth Tool",
@@ -20,7 +21,8 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:"
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:",
+      "devCsp": "default-src 'self'; connect-src ipc: http://ipc.localhost ws://localhost:5173 http://localhost:5173; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:"
     }
   },
   "bundle": {
