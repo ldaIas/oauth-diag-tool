@@ -21,6 +21,10 @@ use axum::{
 
 const CALLBACK_PORT: u16 = 5757;
 
+/// A launched browser that exits sooner than this most likely handed the URL to an
+/// already-running instance of the same profile, so its exit says nothing about the page.
+const BROWSER_HANDOFF_WINDOW: std::time::Duration = std::time::Duration::from_secs(3);
+
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ClientConfig {
@@ -364,10 +368,12 @@ pub async fn authorize_code_flow(
     });
 
     let trampoline_url = format!("http://localhost:{}/start", CALLBACK_PORT);
-    open_browser(&trampoline_url)?;
+    let browser = open_browser(&trampoline_url)?;
     log::info!("Opened browser for authorization");
 
     let code = tokio::select! {
+        // A callback that arrives together with the browser closing wins.
+        biased;
         result = rx => {
             match result {
                 Ok(Ok(code)) => code,
@@ -387,6 +393,11 @@ pub async fn authorize_code_flow(
             let _ = shutdown_tx.send(());
             let _ = server_handle.await;
             return Err("Authorization cancelled".to_string());
+        }
+        _ = browser_closed(browser, BROWSER_HANDOFF_WINDOW) => {
+            let _ = shutdown_tx.send(());
+            let _ = server_handle.await;
+            return Err("Browser closed before authorization completed".to_string());
         }
         _ = tokio::time::sleep(std::time::Duration::from_secs(300)) => {
             let _ = shutdown_tx.send(());
@@ -641,20 +652,42 @@ const CHROME_PATHS: &[&str] = &[
 #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 const CHROME_PATHS: &[&str] = &["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"];
 
+struct LaunchedBrowser {
+    child: tokio::process::Child,
+    launched_at: std::time::Instant,
+}
+
+/// Resolves when the launched browser process exits. Never resolves when the browser
+/// is untracked or its exit looks like a handoff to an existing instance.
+async fn browser_closed(browser: Option<LaunchedBrowser>, handoff_window: std::time::Duration) {
+    let Some(LaunchedBrowser { mut child, launched_at }) = browser else {
+        return std::future::pending().await;
+    };
+    let exited = child.wait().await.is_ok();
+    if !exited || launched_at.elapsed() < handoff_window {
+        std::future::pending::<()>().await;
+    }
+}
+
 /// Prefer Chrome with an isolated profile and devtools (useful for inspecting the
 /// flow); fall back to the OS default browser when Chrome isn't available.
-fn open_browser(url: &str) -> Result<(), String> {
+/// Returns the Chrome process so its exit can be observed; the fallback browser is
+/// not trackable and yields `None`.
+fn open_browser(url: &str) -> Result<Option<LaunchedBrowser>, String> {
     let tmp_dir = std::env::temp_dir().join("oauth-diag-chrome");
     for chrome in CHROME_PATHS {
-        let spawned = std::process::Command::new(chrome)
+        let spawned = tokio::process::Command::new(chrome)
             .arg("--auto-open-devtools-for-tabs")
             .arg(format!("--user-data-dir={}", tmp_dir.display()))
             .arg("--no-first-run")
             .arg("--no-default-browser-check")
             .arg(url)
             .spawn();
-        if spawned.is_ok() {
-            return Ok(());
+        if let Ok(child) = spawned {
+            return Ok(Some(LaunchedBrowser {
+                child,
+                launched_at: std::time::Instant::now(),
+            }));
         }
     }
 
@@ -666,13 +699,55 @@ fn open_browser(url: &str) -> Result<(), String> {
     let fallback = std::process::Command::new("xdg-open").arg(url).spawn();
 
     fallback
-        .map(|_| ())
+        .map(|_| None)
         .map_err(|e| format!("Failed to open a browser: {}", e))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    fn launched(command: &str, args: &[&str]) -> LaunchedBrowser {
+        LaunchedBrowser {
+            child: tokio::process::Command::new(command).args(args).spawn().unwrap(),
+            launched_at: std::time::Instant::now(),
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_closed_resolves_when_process_exits_after_handoff_window() {
+        let browser = launched("sleep", &["0.3"]);
+        let closed = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            browser_closed(Some(browser), std::time::Duration::from_millis(100)),
+        )
+        .await;
+        assert!(closed.is_ok());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn browser_closed_ignores_exit_within_handoff_window() {
+        let browser = launched("true", &[]);
+        let closed = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            browser_closed(Some(browser), std::time::Duration::from_secs(60)),
+        )
+        .await;
+        assert!(closed.is_err());
+    }
+
+    #[tokio::test]
+    async fn browser_closed_never_resolves_for_untracked_browser() {
+        let closed = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            browser_closed(None, std::time::Duration::ZERO),
+        )
+        .await;
+        assert!(closed.is_err());
+    }
 
     fn sample_input() -> ClientConfigInput {
         ClientConfigInput {

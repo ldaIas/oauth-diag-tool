@@ -6,10 +6,11 @@ import type { OAuthClient, ServerConfig, ServerUser } from "../bindings";
 import type { ServerListUi } from "../hooks/useServerListUi";
 import type { ImportedClientFields } from "../lib/clientConfigForm";
 import { nextPort } from "../lib/ports";
+import { matchesSearch } from "../lib/search";
 import { canSaveUserEdit, defaultUserData, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
 import { ServerSettingsForm } from "./ServerSettingsForm";
-import { chevron, Detail } from "./shared";
+import { CardToggle, chevron, Detail, SearchBox } from "./shared";
 
 interface ServerListProps {
   ui: ServerListUi;
@@ -19,6 +20,14 @@ interface ServerListProps {
 
 export function ServerList({ ui, onOpenCreateForm, onImportClient }: ServerListProps) {
   const { servers } = useAppState();
+  const visible = servers.filter((server) =>
+    matchesSearch(ui.search, [
+      server.configName,
+      `localhost:${server.port}`,
+      ...server.clients.map((client) => client.clientId),
+      ...server.users.map((user) => user.username),
+    ]),
+  );
   return (
     <div className="page-content">
       {servers.length === 0 ? (
@@ -26,11 +35,20 @@ export function ServerList({ ui, onOpenCreateForm, onImportClient }: ServerListP
           <span className="empty-label">No servers configured</span>
         </div>
       ) : (
-        <div className="server-list">
-          {servers.map((server) => (
-            <ServerCard key={server.id} server={server} ui={ui} onImportClient={onImportClient} />
-          ))}
-        </div>
+        <>
+          <SearchBox value={ui.search} placeholder="Search servers" onChange={ui.setSearch} />
+          {visible.length === 0 ? (
+            <div className="empty-state">
+              <span className="empty-label">No matching servers</span>
+            </div>
+          ) : (
+            <div className="server-list">
+              {visible.map((server) => (
+                <ServerCard key={server.id} server={server} ui={ui} onImportClient={onImportClient} />
+              ))}
+            </div>
+          )}
+        </>
       )}
       <div className="footer">
         <button className="btn-create" onClick={() => onOpenCreateForm(nextPort(servers.map((s) => s.port)))}>
@@ -49,6 +67,7 @@ interface ServerCardProps {
 
 function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
   const { api, resourceAccess } = useAppState();
+  const cardExpanded = ui.expandedCards.has(server.id);
   const clientsExpanded = ui.expandedClients.has(server.id);
   const settingsExpanded = ui.expandedSettings.has(server.id);
   const settingsEdit = ui.settingsEdits[server.id];
@@ -64,13 +83,31 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
     });
   }
 
+  if (!cardExpanded) {
+    return (
+      <div className="server-card collapsed">
+        <div className="server-card-header">
+          <CardToggle
+            expanded={false}
+            name={server.configName}
+            meta=""
+            running={server.running}
+            onToggle={() => ui.toggleCard(server.id)}
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="server-card">
       <div className="server-card-header">
-        <div className="server-card-left">
-          <span className="server-name">{server.configName}</span>
-          <span className="server-meta">{`localhost:${server.port}`}</span>
-        </div>
+        <CardToggle
+          expanded
+          name={server.configName}
+          meta={`localhost:${server.port}`}
+          onToggle={() => ui.toggleCard(server.id)}
+        />
         <div className="server-card-right">
           {server.running ? (
             <button className="btn-server-control btn-stop" onClick={() => void api.stopServer(server.id)}>
@@ -160,7 +197,11 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
           <Detail label="Last Client" value={access.clientId === "" ? "—" : access.clientId} />
           <Detail label="Last User" value={access.username ?? "—"} />
           <Detail label="Status" value={access.status === 200 ? "200 OK" : String(access.status)} />
-          {access.error === null ? <Detail label="Result" value="Success" /> : <Detail label="Error" value={access.error} />}
+          {access.error === null ? (
+            <Detail label="Result" value="Success" />
+          ) : (
+            <Detail label="Error" value={access.error} />
+          )}
           <Detail label="Time" value={access.timestamp} />
         </div>
       )}
@@ -168,7 +209,15 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
   );
 }
 
-function ClientCard({ client, onImport, onDelete }: { client: OAuthClient; onImport: () => void; onDelete: () => void }) {
+function ClientCard({
+  client,
+  onImport,
+  onDelete,
+}: {
+  client: OAuthClient;
+  onImport: () => void;
+  onDelete: () => void;
+}) {
   return (
     <div className="client-card">
       <div className="client-card-header">
