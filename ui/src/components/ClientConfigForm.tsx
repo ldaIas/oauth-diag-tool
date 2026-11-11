@@ -7,12 +7,15 @@ import { FormInput } from "./shared";
 
 interface ClientConfigFormProps {
   model: ClientConfigFormModel;
+  metadataError: string | null;
+  pullingMetadata: boolean;
+  onPullMetadata: () => void;
   onChange: (model: ClientConfigFormModel) => void;
   onSubmit: (model: ClientConfigFormModel) => void;
   onCancel: () => void;
 }
 
-export function ClientConfigForm({ model, onChange, onSubmit, onCancel }: ClientConfigFormProps) {
+export function ClientConfigForm({ model, metadataError, pullingMetadata, onPullMetadata, onChange, onSubmit, onCancel }: ClientConfigFormProps) {
   const { callbackUrl } = useAppState();
   const editing = model.editingId !== null;
 
@@ -24,6 +27,11 @@ export function ClientConfigForm({ model, onChange, onSubmit, onCancel }: Client
     <div className="form-overlay">
       <div className="form-panel">
         <div className="form-title">{editing ? "Edit Client Configuration" : "New Client Configuration"}</div>
+        {metadataError !== null && model.useServerMetadata && (
+          <div className="error-banner" role="alert">
+            <span className="error-banner-text">{metadataError}</span>
+          </div>
+        )}
         <FormInput label="Name" value={model.name} placeholder="My Client Config" onChange={set("name")} />
         <FormInput
           label="Issuer URL"
@@ -40,6 +48,16 @@ export function ClientConfigForm({ model, onChange, onSubmit, onCancel }: Client
             />
             <span className="param-toggle-name">Use Authorization Server Metadata</span>
           </label>
+          {model.useServerMetadata && (
+            <button
+              type="button"
+              className="btn-import"
+              disabled={pullingMetadata || model.issuerUrl.trim() === ""}
+              onClick={onPullMetadata}
+            >
+              {pullingMetadata ? "Pulling..." : "\u2913 Pull Now"}
+            </button>
+          )}
         </div>
         {model.useServerMetadata ? (
           <DisabledInput label="Authorization URL" value={model.authorizationUrl} />
