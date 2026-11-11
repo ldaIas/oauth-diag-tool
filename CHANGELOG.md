@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 - Replace the Elm frontend with TypeScript + React, using tauri-specta generated bindings; Tauri 2.12.5 [PR](https://github.com/ldaIas/oauth-diag-tool/pull/16)
-- Add user-based access to OAuth servers
+- Add user-based access to OAuth servers [PR](https://github.com/ldaIas/oauth-diag-tool/pull/17)
   - Servers can have users (username, password, user data). Users can be added, edited (password, user data), and deleted from the server card, and created from the OAuth login page
   - New server setting "User-based access". When on, `/authorize` shows a login page (sign in or create a user) instead of the consent page; when off, the consent flow is unchanged. Takes effect on server restart. Users are kept when the setting is turned off
   - User data defaults to `example data for user <username>`
