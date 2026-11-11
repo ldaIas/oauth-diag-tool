@@ -123,8 +123,9 @@ struct ErrorResponse {
     error_description: String,
 }
 
+/// RFC 8414 authorization server metadata.
 #[derive(Serialize)]
-struct OpenIdConfiguration {
+struct AuthorizationServerMetadata {
     issuer: String,
     authorization_endpoint: String,
     token_endpoint: String,
@@ -147,7 +148,7 @@ struct AuthorizeQuery {
 
 pub fn build_router(state: ServerState) -> Router {
     Router::new()
-        .route("/.well-known/openid-configuration", get(openid_configuration))
+        .route("/.well-known/oauth-authorization-server", get(authorization_server_metadata))
         .route("/authorize", get(authorize_endpoint))
         .route("/authorize", post(authorize_submit))
         .route("/token", post(token_endpoint))
@@ -155,13 +156,17 @@ pub fn build_router(state: ServerState) -> Router {
         .with_state(state)
 }
 
-async fn openid_configuration(
+async fn authorization_server_metadata(
     State(state): State<ServerState>,
-) -> Json<OpenIdConfiguration> {
-    Json(OpenIdConfiguration {
-        issuer: state.issuer_url.clone(),
-        authorization_endpoint: format!("{}/authorize", state.issuer_url),
-        token_endpoint: state.token_url.clone(),
+) -> Json<AuthorizationServerMetadata> {
+    Json(build_metadata(&state.issuer_url, &state.token_url))
+}
+
+fn build_metadata(issuer_url: &str, token_url: &str) -> AuthorizationServerMetadata {
+    AuthorizationServerMetadata {
+        issuer: issuer_url.to_string(),
+        authorization_endpoint: format!("{}/authorize", issuer_url),
+        token_endpoint: token_url.to_string(),
         grant_types_supported: vec![
             "client_credentials".to_string(),
             "authorization_code".to_string(),
@@ -176,7 +181,7 @@ async fn openid_configuration(
             "S256".to_string(),
             "plain".to_string(),
         ],
-    })
+    }
 }
 
 async fn authorize_endpoint(
@@ -1024,6 +1029,18 @@ fn resource_body(claims: &JwtClaims, user_data: Option<&str>, user_based: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_issuer_and_endpoints_match_server_urls() {
+        let json = serde_json::to_value(build_metadata(
+            "http://localhost:9500",
+            "http://localhost:9500/token",
+        ))
+        .unwrap();
+        assert_eq!(json["issuer"], "http://localhost:9500");
+        assert_eq!(json["authorization_endpoint"], "http://localhost:9500/authorize");
+        assert_eq!(json["token_endpoint"], "http://localhost:9500/token");
+    }
 
     fn s256_challenge(verifier: &str) -> String {
         let mut hasher = Sha256::new();

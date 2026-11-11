@@ -39,7 +39,7 @@ OAuth Servers let you spin up local OAuth authorization servers for testing.
   - `POST /authorize` — Processes approve/deny, issues auth codes
   - `POST /token` — Token endpoint (supports `client_credentials`, `authorization_code`, and `refresh_token` grants; PKCE S256)
   - `GET /resource` — Sample protected resource; validates the Bearer token and reports the access in the server card
-  - `GET /.well-known/openid-configuration` — Discovery document
+  - `GET /.well-known/oauth-authorization-server` — Authorization server metadata (RFC 8414)
 - Client authentication supports both `client_secret_post` and `client_secret_basic`.
 - Access tokens are JWTs signed with a per-server HMAC-SHA256 key. Refresh tokens are issued when the requested scope includes `offline_access`.
 - Token expiries and a redirect URL override are configurable per server in its settings.
