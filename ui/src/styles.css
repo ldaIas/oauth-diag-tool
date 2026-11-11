@@ -1,3 +1,12 @@
+/* Bundled locally so the app works offline and under a strict CSP */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+}
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
@@ -30,6 +39,31 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   flex: 1;
   gap: 24px;
   min-height: 0;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #3d1a1a;
+  border: 1px solid var(--danger);
+  border-radius: 6px;
+  color: var(--danger);
+  font-size: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  word-break: break-word;
+}
+
+.error-banner-dismiss {
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+
+.error-banner-dismiss:hover {
+  color: var(--text);
 }
 
 .panel {
@@ -177,7 +211,30 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   justify-content: space-between;
 }
 
-.server-card-left { display: flex; flex-direction: column; gap: 4px; }
+.server-card.collapsed { padding: 8px 18px; }
+
+.card-toggle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.card-toggle-title { display: flex; align-items: center; gap: 8px; }
+
+.card-chevron { width: 12px; font-size: 9px; color: var(--text-dim); }
+
+.card-toggle-meta { padding-left: 20px; }
+
+.search-input { margin-bottom: 10px; }
 
 .server-name { font-size: 13px; font-weight: 500; color: var(--text); }
 
@@ -464,6 +521,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 
 .settings-actions {
   display: flex;
+  align-items: center;
+  gap: 8px;
   justify-content: flex-end;
   padding-top: 4px;
 }
@@ -890,4 +949,78 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .form-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.settings-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.settings-checkbox input { accent-color: var(--accent); cursor: pointer; }
+
+.user-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px;
+  margin: 0 0 6px 16px;
+  background: var(--bg);
+  border: 1px dashed var(--border-hi);
+  border-radius: 4px;
+}
+
+.user-form-error {
+  font-size: 10px;
+  color: var(--danger);
+  letter-spacing: 0.04em;
+}
+
+.user-name {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.user-data-input {
+  min-height: 56px;
+  resize: vertical;
+  line-height: 1.4;
+}
+
+.access-token {
+  position: relative;
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+.access-token-actions {
+  display: none;
+  position: absolute;
+  top: -2px;
+  right: 0;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.access-token:hover .access-token-actions {
+  display: inline-flex;
+}
+
+.access-token-action {
+  background: var(--bg);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 8px;
+  font-family: var(--font);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.access-token-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-dim);
 }

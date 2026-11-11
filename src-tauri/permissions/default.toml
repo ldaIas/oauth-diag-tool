@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-refresh-token", "allow-cancel-authorization", "allow-fetch-server-metadata"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-add-user-to-server", "allow-update-user", "allow-delete-user", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-refresh-token", "allow-cancel-authorization", "allow-fetch-server-metadata"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -86,3 +86,18 @@ commands.allow = ["cancel_authorization"]
 identifier = "allow-fetch-server-metadata"
 description = "Allow fetching OAuth authorization server metadata"
 commands.allow = ["fetch_server_metadata"]
+
+[[permission]]
+identifier = "allow-add-user-to-server"
+description = "Allow adding users to server configurations"
+commands.allow = ["add_user_to_server"]
+
+[[permission]]
+identifier = "allow-update-user"
+description = "Allow updating server users"
+commands.allow = ["update_user"]
+
+[[permission]]
+identifier = "allow-delete-user"
+description = "Allow deleting server users"
+commands.allow = ["delete_user"]

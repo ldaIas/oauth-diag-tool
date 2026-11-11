@@ -1,6 +1,6 @@
 # OAuth Diagnostic Tool
 
-A cross-platform desktop application for running local OAuth servers and testing OAuth client configurations. Built with Tauri 2 (Rust) and Elm 0.19.
+A cross-platform desktop application for running local OAuth servers and testing OAuth client configurations. Built with Tauri 2 (Rust) and TypeScript with React 19.
 
 ## Installation
 
@@ -37,10 +37,12 @@ OAuth Servers let you spin up local OAuth authorization servers for testing.
 - Running servers expose the following endpoints:
   - `GET /authorize` — Authorization endpoint (renders a consent page for authorization_code flow)
   - `POST /authorize` — Processes approve/deny, issues auth codes
-  - `POST /token` — Token endpoint (supports `client_credentials` and `authorization_code` grants)
-  - `GET /.well-known/openid-configuration` — Discovery document
+  - `POST /token` — Token endpoint (supports `client_credentials`, `authorization_code`, and `refresh_token` grants; PKCE S256)
+  - `GET /resource` — Sample protected resource; validates the Bearer token and reports the access in the server card
+  - `GET /.well-known/oauth-authorization-server` — Authorization server metadata (RFC 8414)
 - Client authentication supports both `client_secret_post` and `client_secret_basic`.
-- Access tokens are opaque UUIDs.
+- Access tokens are JWTs signed with a per-server HMAC-SHA256 key. Refresh tokens are issued when the requested scope includes `offline_access`.
+- Token expiries and a redirect URL override are configurable per server in its settings.
 - All running servers are automatically stopped when the app closes.
 - A server cannot be deleted while it is running.
 
@@ -58,7 +60,8 @@ Client Configurations let you store and test OAuth client details against any OA
 **Authorizing:**
 - Click "Authorize" on a client configuration to initiate the OAuth flow.
 - For `client_credentials`, the token request is made directly.
-- For `authorization_code`, the app starts a local callback server on port 5757, opens the authorization URL in Google Chrome, and exchanges the received code for tokens. PKCE (S256) is used automatically. Requires Chrome to be installed.
+- For `authorization_code`, the app starts a local callback server on port 5757, opens the authorization URL in a browser, and exchanges the received code for tokens. PKCE (S256) is used automatically. Chrome is preferred (opened with an isolated profile and devtools); the OS default browser is used when Chrome isn't installed.
+- For configs with a stored refresh token, "Refresh" exchanges it for new tokens; rotated refresh tokens are persisted automatically.
 - Auth results appear in an expandable section on the configuration card.
 
 
@@ -66,10 +69,10 @@ Client Configurations let you store and test OAuth client details against any OA
 
 ### Prerequisites
 
-- **Rust** (1.77.2+) — [rustup.rs](https://rustup.rs)
-- **Tauri CLI** — `cargo install tauri-cli`
-- **Elm** (0.19.1) — [guide.elm-lang.org/install](https://guide.elm-lang.org/install/elm.html)
-- **Google Chrome** — required for authorization_code flows (the app opens Chrome with dev tools directly for the browser-based consent step)
+- **Rust** (1.85+) — [rustup.rs](https://rustup.rs)
+- **Tauri CLI** (2.12+) — `cargo install tauri-cli --version "^2.12" --locked`
+- **Node.js** (24 LTS, with npm) — [nodejs.org](https://nodejs.org)
+- **Google Chrome** — optional; when installed, authorization_code flows open in Chrome with devtools for inspecting the consent step (otherwise the OS default browser is used)
 
 #### macOS
 
@@ -80,11 +83,10 @@ xcode-select --install
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install Elm (via Homebrew)
-brew install elm
+# Install Node.js 24 LTS (from nodejs.org, or a version manager such as nvm or fnm)
 
 # Install Tauri CLI
-cargo install tauri-cli
+cargo install tauri-cli --version "^2.12" --locked
 ```
 
 #### Linux (Debian/Ubuntu)
@@ -98,14 +100,10 @@ sudo apt install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
 # Install Rust
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
-# Install Elm
-curl -L -o elm.gz https://github.com/elm/compiler/releases/download/0.19.1/binary-for-linux-64-bit.gz
-gunzip elm.gz
-chmod +x elm
-sudo mv elm /usr/local/bin/
+# Install Node.js 24 LTS (from nodejs.org, or a version manager such as nvm or fnm)
 
 # Install Tauri CLI
-cargo install tauri-cli
+cargo install tauri-cli --version "^2.12" --locked
 ```
 
 #### Windows
@@ -121,20 +119,22 @@ cargo install tauri-cli
 # Install Rust
 # Download and run https://rustup.rs
 
-# Install Elm
-# Download from https://github.com/elm/compiler/releases/download/0.19.1/installer-for-windows.exe
+# Install Node.js 24 LTS from https://nodejs.org
 
 # Install Tauri CLI
-cargo install tauri-cli
+cargo install tauri-cli --version "^2.12" --locked
 ```
 
 ### Running in Development
 
+Install the frontend dependencies once, then start the app:
+
 ```bash
+cd ui && npm install
 cargo tauri dev
 ```
 
-This compiles the Elm frontend automatically before launching the app.
+`cargo tauri dev` starts the Vite dev server on port 5173 before launching the app.
 
 ### Building
 
@@ -142,14 +142,38 @@ This compiles the Elm frontend automatically before launching the app.
 cargo tauri build
 ```
 
-### Compiling the Frontend Only
+`cargo tauri build` runs the frontend build (`npm run build`) first. The Rust crate also needs `ui/dist/` to exist at compile time (it is gitignored), so run `cd ui && npm run build` once, or `mkdir -p ui/dist`, before building or testing the Rust code directly.
+
+### Building and Typechecking the Frontend Only
 
 ```bash
-cd ui && elm make src/Main.elm --output dist/main.js
+cd ui && npm run build       # typecheck + Vite build into ui/dist/
+cd ui && npm run typecheck   # typecheck only
+```
+
+### Regenerating Bindings
+
+`ui/src/bindings.ts` is generated from the Rust commands and events. After changing a command or event type, regenerate it by running `cargo tauri dev` or with:
+
+```bash
+cd src-tauri && UPDATE_BINDINGS=1 cargo test bindings_are_current
+```
+
+`cargo test` fails while the committed bindings are out of date.
+
+### Testing
+
+```bash
+# Rust tests and lints (CI treats clippy warnings as errors)
+cd src-tauri && cargo test
+cd src-tauri && cargo clippy --all-targets -- -D warnings
+
+# Frontend tests (Vitest)
+cd ui && npm test
 ```
 
 ## Tech Stack
 
 - **Backend:** Rust, Tauri 2, Axum, SQLite (via rusqlite)
-- **Frontend:** Elm 0.19, vanilla CSS
-- **IPC:** Elm ports to Tauri `invoke()` calls via a JavaScript bridge
+- **Frontend:** TypeScript, React 19, Vite, vanilla CSS
+- **IPC:** Typed Tauri `invoke()` calls and events generated by tauri-specta into `ui/src/bindings.ts`
