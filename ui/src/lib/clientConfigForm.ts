@@ -1,6 +1,7 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import type { ServerMetadataResponse } from "../bindings";
 import { sortedEntries } from "./params";
 import type { ClientConfigFields, ParsedClientConfig } from "./types";
 
@@ -26,6 +27,8 @@ export interface ClientConfigFormModel {
   scopesSupported: string;
   disabledRefreshParams: Record<string, boolean>;
   useServerMetadata: boolean;
+  /** Issuer URL whose metadata filled the endpoint fields via "Pull Now"; null when nothing has been pulled. */
+  pulledIssuerUrl: string | null;
 }
 
 export interface ImportedClientFields {
@@ -54,6 +57,7 @@ export function initClientConfigForm(): ClientConfigFormModel {
     scopesSupported: "",
     disabledRefreshParams: {},
     useServerMetadata: false,
+    pulledIssuerUrl: null,
   };
 }
 
@@ -86,6 +90,22 @@ export function initFromEdit(config: ParsedClientConfig): ClientConfigFormModel 
     scopesSupported: config.scopesSupported,
     disabledRefreshParams: config.disabledRefreshParams,
     useServerMetadata: false,
+    pulledIssuerUrl: null,
+  };
+}
+
+/** True when saving must fetch metadata because the form does not already hold the current issuer's. */
+export function needsMetadataFetch(form: ClientConfigFormModel): boolean {
+  return form.useServerMetadata && form.pulledIssuerUrl !== form.issuerUrl;
+}
+
+export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetadataResponse): ClientConfigFormModel {
+  return {
+    ...form,
+    authorizationUrl: metadata.authorizationEndpoint,
+    tokenUrl: metadata.tokenEndpoint,
+    scopesSupported: metadata.scopesSupported,
+    pulledIssuerUrl: form.issuerUrl,
   };
 }
 

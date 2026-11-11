@@ -10,6 +10,7 @@
   - The Resource section shows the last user
 - Add copy and decode actions to the access token in client responses [PR](https://github.com/ldaIas/oauth-diag-tool/pull/18)
 - Collapse server and client config cards to a name row, add list search, and fail the authorization code flow when the browser closes [PR](https://github.com/ldaIas/oauth-diag-tool/pull/19)
+- Show metadata fetch errors on the client config form and add a Pull Now button for authorization server metadata [PR](https://github.com/ldaIas/oauth-diag-tool/pull/20)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)

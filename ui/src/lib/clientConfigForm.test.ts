@@ -3,9 +3,11 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  applyMetadata,
   initClientConfigForm,
   initFromEdit,
   initFromImport,
+  needsMetadataFetch,
   removeAt,
   toConfigInput,
   updateAt,
@@ -115,5 +117,31 @@ describe("ClientConfigForm", () => {
     test("is a no-op when the index is out of range", () => {
       expect(updateAt(5, (s: string) => s.toUpperCase(), ["a"])).toEqual(["a"]);
     });
+  });
+});
+
+describe("metadata pull", () => {
+  const metadata = {
+    body: "{}",
+    authorizationEndpoint: "http://issuer/authorize",
+    tokenEndpoint: "http://issuer/token",
+    scopesSupported: "openid",
+  };
+  const form = { ...initClientConfigForm(), issuerUrl: "http://issuer", useServerMetadata: true };
+
+  test("applyMetadata fills the endpoints and records the issuer it came from", () => {
+    expect(applyMetadata(form, metadata)).toMatchObject({
+      authorizationUrl: "http://issuer/authorize",
+      tokenUrl: "http://issuer/token",
+      scopesSupported: "openid",
+      pulledIssuerUrl: "http://issuer",
+    });
+  });
+
+  test("a save fetches only when metadata is wanted and not already pulled for this issuer", () => {
+    expect(needsMetadataFetch({ ...form, useServerMetadata: false })).toBe(false);
+    expect(needsMetadataFetch(form)).toBe(true);
+    expect(needsMetadataFetch(applyMetadata(form, metadata))).toBe(false);
+    expect(needsMetadataFetch({ ...applyMetadata(form, metadata), issuerUrl: "http://other" })).toBe(true);
   });
 });
