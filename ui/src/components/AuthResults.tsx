@@ -1,7 +1,9 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react";
 import type { AuthState, MetadataState } from "../hooks/useClientConfigListUi";
+import { decodeJwt, splitAtAccessToken } from "../lib/accessToken";
 
 interface AuthorizeButtonsProps {
   state: AuthState;
@@ -74,7 +76,7 @@ export function AuthResponseView({ state }: { state: AuthState }) {
           </div>
           <div className="auth-response-body">
             <span className="detail-label">Body</span>
-            <pre className="auth-body-content">{response.body}</pre>
+            <ResponseBody key={response.body} body={response.body} />
           </div>
         </div>
       );
@@ -90,6 +92,47 @@ export function AuthResponseView({ state }: { state: AuthState }) {
       return exhaustive;
     }
   }
+}
+
+function ResponseBody({ body }: { body: string }) {
+  const [decoded, setDecoded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const split = splitAtAccessToken(body);
+  if (split === null) {
+    return <pre className="auth-body-content">{body}</pre>;
+  }
+  const decodedText = decodeJwt(split.token, split.indent);
+  const showDecoded = decoded && decodedText !== null;
+
+  const copyRaw = () => {
+    navigator.clipboard
+      .writeText(split.token)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {});
+  };
+
+  return (
+    <pre className="auth-body-content">
+      {split.before}
+      <span className="access-token">
+        {showDecoded ? decodedText : JSON.stringify(split.token)}
+        <span className="access-token-actions">
+          <button type="button" className="access-token-action" onClick={copyRaw}>
+            {copied ? "Copied" : "Copy"}
+          </button>
+          {decodedText !== null && (
+            <button type="button" className="access-token-action" onClick={() => setDecoded(!decoded)}>
+              {showDecoded ? "Show raw" : "Decode"}
+            </button>
+          )}
+        </span>
+      </span>
+      {split.after}
+    </pre>
+  );
 }
 
 export function MetadataStateView({ state }: { state: MetadataState }) {
