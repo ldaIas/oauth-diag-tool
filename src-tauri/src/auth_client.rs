@@ -524,9 +524,19 @@ async fn build_auth_response(response: reqwest::Response) -> Result<AuthResponse
     })
 }
 
+/// RFC 8414 section 3: the well-known segment goes between the host and any issuer path.
+fn metadata_url(issuer_url: &str) -> Result<String, String> {
+    let mut url = reqwest::Url::parse(issuer_url.trim())
+        .map_err(|e| format!("Invalid issuer URL: {}", e))?;
+    let path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&format!("/.well-known/oauth-authorization-server{}", path));
+    url.set_query(None);
+    url.set_fragment(None);
+    Ok(url.to_string())
+}
+
 pub async fn fetch_server_metadata(issuer_url: &str) -> Result<ServerMetadataResponse, String> {
-    let base = issuer_url.trim_end_matches('/');
-    let url = format!("{}/.well-known/oauth-authorization-server", base);
+    let url = metadata_url(issuer_url)?;
     log::info!("fetch_server_metadata: {}", url);
 
     let client = reqwest::Client::new();
@@ -706,6 +716,22 @@ fn open_browser(url: &str) -> Result<Option<LaunchedBrowser>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_url_for_root_issuer() {
+        assert_eq!(
+            metadata_url("http://localhost:9500/").unwrap(),
+            "http://localhost:9500/.well-known/oauth-authorization-server"
+        );
+    }
+
+    #[test]
+    fn metadata_url_inserts_well_known_before_issuer_path() {
+        assert_eq!(
+            metadata_url("https://example.com/tenant1/").unwrap(),
+            "https://example.com/.well-known/oauth-authorization-server/tenant1"
+        );
+    }
 
     #[cfg(unix)]
     fn launched(command: &str, args: &[&str]) -> LaunchedBrowser {
