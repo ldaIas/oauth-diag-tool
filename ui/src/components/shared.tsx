@@ -1,6 +1,9 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import { helpText, type HelpKey } from "../lib/help";
+import { LabelWithHelp } from "./HelpTip";
+
 export function chevron(expanded: boolean): string {
   return expanded ? "\u{25BC}" : "\u{25B6}";
 }
@@ -53,10 +56,10 @@ export function SearchBox({
   );
 }
 
-export function Detail({ label, value }: { label: string; value: string }) {
+export function Detail({ label, value, help }: { label: string; value: string; help?: HelpKey }) {
   return (
     <div className="server-detail">
-      <span className="detail-label">{label}</span>
+      <FieldLabel className="detail-label" label={label} help={help} />
       <span className="detail-value">{value}</span>
     </div>
   );
@@ -66,16 +69,18 @@ export function FormInput({
   label,
   value,
   placeholder,
+  help,
   onChange,
 }: {
   label: string;
   value: string;
   placeholder: string;
+  help?: HelpKey;
   onChange: (value: string) => void;
 }) {
   return (
     <div className="form-field">
-      <span className="form-label">{label}</span>
+      <FieldLabel className="form-label" label={label} help={help} />
       <input
         className="form-input"
         type="text"
@@ -85,4 +90,8 @@ export function FormInput({
       />
     </div>
   );
+}
+
+export function FieldLabel({ label, help, className }: { label: string; help: HelpKey | undefined; className: string }) {
+  return <LabelWithHelp className={className} label={label} help={help === undefined ? undefined : helpText(help)} />;
 }

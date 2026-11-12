@@ -1,7 +1,10 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import { helpText, type HelpKey } from "../lib/help";
 import type { SettingsEdit } from "../lib/serverSettings";
+import { HelpTip } from "./HelpTip";
+import { FieldLabel } from "./shared";
 
 interface ServerSettingsFormProps {
   edit: SettingsEdit;
@@ -16,6 +19,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
       <div className="settings-hint">Server must be restarted for changes to take effect.</div>
       <SettingsField
         label="Redirect URL Override"
+        help="serverSettings.redirectUrlOverride"
         type="text"
         placeholder="Leave empty to use client-provided URL"
         value={edit.redirectUrlOverride}
@@ -23,6 +27,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
       />
       <SettingsField
         label="Access Token Expiry (seconds)"
+        help="serverSettings.accessTokenExpiry"
         type="number"
         placeholder="3600"
         value={edit.accessTokenExpiry}
@@ -30,6 +35,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
       />
       <SettingsField
         label="Refresh Token Expiry (seconds)"
+        help="serverSettings.refreshTokenExpiry"
         type="number"
         placeholder="86400"
         value={edit.refreshTokenExpiry}
@@ -38,6 +44,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
       <label className="settings-checkbox">
         <input type="checkbox" checked={edit.userBased} onChange={(e) => onEdit({ userBased: e.target.checked })} />
         <span className="detail-label">User-based access</span>
+        <HelpTip text={helpText("serverSettings.userBased")} />
       </label>
       <div className="settings-hint">
         When on, /authorize shows a login page where a user signs in or creates an account, and tokens carry that user.
@@ -54,12 +61,14 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
 
 function SettingsField({
   label,
+  help,
   type,
   placeholder,
   value,
   onChange,
 }: {
   label: string;
+  help: HelpKey;
   type: "text" | "number";
   placeholder: string;
   value: string;
@@ -67,7 +76,7 @@ function SettingsField({
 }) {
   return (
     <div className="settings-field">
-      <span className="detail-label">{label}</span>
+      <FieldLabel className="detail-label" label={label} help={help} />
       <input
         className="form-input settings-input"
         type={type}

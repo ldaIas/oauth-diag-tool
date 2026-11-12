@@ -5,12 +5,14 @@ import type { ReactNode } from "react";
 import type { OAuthClient, ServerConfig, ServerUser } from "../bindings";
 import type { ServerListUi } from "../hooks/useServerListUi";
 import type { ImportedClientFields } from "../lib/clientConfigForm";
+import { helpText, type HelpKey } from "../lib/help";
 import { nextPort } from "../lib/ports";
 import { matchesSearch } from "../lib/search";
 import { canSaveUserEdit, defaultUserData, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
+import { HelpTip } from "./HelpTip";
 import { ServerSettingsForm } from "./ServerSettingsForm";
-import { CardToggle, chevron, Detail, SearchBox } from "./shared";
+import { CardToggle, chevron, Detail, FieldLabel, SearchBox } from "./shared";
 
 interface ServerListProps {
   ui: ServerListUi;
@@ -130,9 +132,9 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
         </div>
       </div>
       <div className="server-card-details">
-        <Detail label="Issuer" value={server.issuerUrl} />
-        <Detail label="Authorization" value={server.authServerUrl} />
-        <Detail label="Token" value={server.tokenUrl} />
+        <Detail label="Issuer" value={server.issuerUrl} help="server.issuerUrl" />
+        <Detail label="Authorization" value={server.authServerUrl} help="server.authorizationUrl" />
+        <Detail label="Token" value={server.tokenUrl} help="server.tokenUrl" />
       </div>
       <div className="settings-section">
         <div className="settings-section-header">
@@ -153,8 +155,11 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
       {(server.users.length > 0 || server.userBased) && <UsersSection server={server} ui={ui} />}
       <div className="client-section">
         <div className="client-section-header">
-          <span className="expandable-toggle" onClick={() => ui.toggleClients(server.id)}>
-            {`${chevron(clientsExpanded)} Clients (${server.clients.length})`}
+          <span className="label-with-help">
+            <span className="expandable-toggle" onClick={() => ui.toggleClients(server.id)}>
+              {`${chevron(clientsExpanded)} Clients (${server.clients.length})`}
+            </span>
+            <HelpTip text={helpText("server.clients")} />
           </span>
           <button className="btn-add-client" onClick={() => ui.addClient(server.id)}>
             + Add Client
@@ -184,7 +189,10 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
   return (
     <div className="resource-section">
       <div className="resource-section-header">
-        <span className="section-label">Resource</span>
+        <span className="section-label label-with-help">
+          Resource
+          <HelpTip text={helpText("server.resource")} />
+        </span>
       </div>
       <div className="resource-hint">{`Test your token by doing a request: GET ${issuerUrl}/resource`}</div>
       <div className="resource-hint">
@@ -232,8 +240,8 @@ function ClientCard({
         </div>
       </div>
       <div className="client-details">
-        <Detail label="Client ID" value={client.clientId} />
-        <Detail label="Secret" value={client.clientSecret} />
+        <Detail label="Client ID" value={client.clientId} help="server.clientId" />
+        <Detail label="Secret" value={client.clientSecret} help="server.clientSecret" />
       </div>
     </div>
   );
@@ -245,8 +253,11 @@ function UsersSection({ server, ui }: { server: ServerConfig; ui: ServerListUi }
   return (
     <div className="client-section">
       <div className="client-section-header">
-        <span className="expandable-toggle" onClick={() => ui.toggleUsers(server.id)}>
-          {`${chevron(expanded)} Users (${server.users.length})`}
+        <span className="label-with-help">
+          <span className="expandable-toggle" onClick={() => ui.toggleUsers(server.id)}>
+            {`${chevron(expanded)} Users (${server.users.length})`}
+          </span>
+          <HelpTip text={helpText("server.users")} />
         </span>
         <button className="btn-add-client" onClick={() => ui.openAddUser(server.id)}>
           + Add User
@@ -301,7 +312,7 @@ function AddUserForm({
 }) {
   return (
     <div className="user-form">
-      <UserField label="Username">
+      <UserField label="Username" help="serverUser.username">
         <input
           className="form-input settings-input"
           type="text"
@@ -309,7 +320,7 @@ function AddUserForm({
           onChange={(e) => onEdit({ username: e.target.value })}
         />
       </UserField>
-      <UserField label="Password">
+      <UserField label="Password" help="serverUser.password">
         <input
           className="form-input settings-input"
           type="text"
@@ -317,7 +328,7 @@ function AddUserForm({
           onChange={(e) => onEdit({ password: e.target.value })}
         />
       </UserField>
-      <UserField label="User Data">
+      <UserField label="User Data" help="serverUser.userData">
         <textarea
           className="form-input settings-input user-data-input"
           placeholder={defaultUserData(draft.username === "" ? "<username>" : draft.username)}
@@ -363,7 +374,7 @@ function UserCard({
           </button>
         </div>
       </div>
-      <UserField label="Password">
+      <UserField label="Password" help="serverUser.password">
         <input
           className="form-input settings-input"
           type="text"
@@ -371,7 +382,7 @@ function UserCard({
           onChange={(e) => onEdit({ password: e.target.value })}
         />
       </UserField>
-      <UserField label="User Data">
+      <UserField label="User Data" help="serverUser.userData">
         <textarea
           className="form-input settings-input user-data-input"
           placeholder={defaultUserData(user.username)}
@@ -389,10 +400,10 @@ function UserCard({
   );
 }
 
-function UserField({ label, children }: { label: string; children: ReactNode }) {
+function UserField({ label, help, children }: { label: string; help: HelpKey; children: ReactNode }) {
   return (
     <div className="settings-field">
-      <span className="detail-label">{label}</span>
+      <FieldLabel className="detail-label" label={label} help={help} />
       {children}
     </div>
   );
