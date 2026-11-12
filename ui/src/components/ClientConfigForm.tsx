@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { removeAt, updateAt, type ClientConfigFormModel, type ExtraParamRow } from "../lib/clientConfigForm";
+import { helpText, type HelpKey } from "../lib/help";
 import { useAppState } from "../state";
-import { FormInput } from "./shared";
+import { HelpTip } from "./HelpTip";
+import { FieldLabel, FormInput } from "./shared";
 
 interface ClientConfigFormProps {
   model: ClientConfigFormModel;
@@ -32,11 +34,12 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
             <span className="error-banner-text">{metadataError}</span>
           </div>
         )}
-        <FormInput label="Name" value={model.name} placeholder="My Client Config" onChange={set("name")} />
+        <FormInput label="Name" value={model.name} placeholder="My Client Config" help="clientConfig.name" onChange={set("name")} />
         <FormInput
           label="Issuer URL"
           value={model.issuerUrl}
           placeholder="https://auth.example.com"
+          help="clientConfig.issuerUrl"
           onChange={set("issuerUrl")}
         />
         <div className="form-field form-field-checkbox">
@@ -47,6 +50,7 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
               onChange={() => onChange({ ...model, useServerMetadata: !model.useServerMetadata })}
             />
             <span className="param-toggle-name">Use Authorization Server Metadata</span>
+            <HelpTip text={helpText("clientConfig.useServerMetadata")} />
           </label>
           {model.useServerMetadata && (
             <button
@@ -60,35 +64,38 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
           )}
         </div>
         {model.useServerMetadata ? (
-          <DisabledInput label="Authorization URL" value={model.authorizationUrl} />
+          <DisabledInput label="Authorization URL" value={model.authorizationUrl} help="clientConfig.authorizationUrl" />
         ) : (
           <FormInput
             label="Authorization URL"
             value={model.authorizationUrl}
             placeholder="https://auth.example.com/authorize"
+            help="clientConfig.authorizationUrl"
             onChange={set("authorizationUrl")}
           />
         )}
         {model.useServerMetadata ? (
-          <DisabledInput label="Token URL" value={model.tokenUrl} />
+          <DisabledInput label="Token URL" value={model.tokenUrl} help="clientConfig.tokenUrl" />
         ) : (
           <FormInput
             label="Token URL"
             value={model.tokenUrl}
             placeholder="https://auth.example.com/token"
+            help="clientConfig.tokenUrl"
             onChange={set("tokenUrl")}
           />
         )}
-        <FormInput label="Client ID" value={model.clientId} placeholder="client-id" onChange={set("clientId")} />
+        <FormInput label="Client ID" value={model.clientId} placeholder="client-id" help="clientConfig.clientId" onChange={set("clientId")} />
         <FormInput
           label="Client Secret"
           value={model.clientSecret}
           placeholder="client-secret"
+          help="clientConfig.clientSecret"
           onChange={set("clientSecret")}
         />
-        <FormInput label="Scopes" value={model.scopes} placeholder="openid profile email" onChange={set("scopes")} />
+        <FormInput label="Scopes" value={model.scopes} placeholder="openid profile email" help="clientConfig.scopes" onChange={set("scopes")} />
         <div className="form-field">
-          <span className="form-label">Grant Type</span>
+          <FieldLabel className="form-label" label="Grant Type" help="clientConfig.grantType" />
           <select
             className="form-input form-select"
             value={model.grantType}
@@ -100,7 +107,7 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
         </div>
         {model.grantType === "authorization_code" && callbackUrl !== "" && (
           <div className="form-field">
-            <span className="form-label">Callback URL</span>
+            <FieldLabel className="form-label" label="Callback URL" help="clientConfig.callbackUrl" />
             <input className="form-input form-input-readonly" type="text" value={callbackUrl} readOnly />
           </div>
         )}
@@ -118,10 +125,10 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
   );
 }
 
-function DisabledInput({ label, value }: { label: string; value: string }) {
+function DisabledInput({ label, value, help }: { label: string; value: string; help: HelpKey }) {
   return (
     <div className="form-field">
-      <span className="form-label">{label}</span>
+      <FieldLabel className="form-label" label={label} help={help} />
       <input
         className="form-input form-input-readonly"
         type="text"
@@ -137,7 +144,7 @@ function ExtraParams({ rows, onChange }: { rows: ExtraParamRow[]; onChange: (row
   return (
     <div className="form-field">
       <div className="extra-params-header">
-        <span className="form-label">Extra Query Parameters</span>
+        <FieldLabel className="form-label" label="Extra Query Parameters" help="clientConfig.extraParams" />
         <button className="btn-add-client" onClick={() => onChange([...rows, { key: "", value: "" }])}>
           + Add
         </button>

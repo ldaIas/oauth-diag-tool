@@ -1,0 +1,59 @@
+{
+  "server": {
+    "name": "A label for this server in the app. It is not sent in any request.",
+    "port": "The local port the server listens on (127.0.0.1 only). The issuer and endpoint URLs are built from it.",
+    "issuerUrl": "The server's base URL. Clients use it as the issuer, and its metadata is served at /.well-known/oauth-authorization-server.",
+    "authorizationUrl": "Where clients send the browser for the authorization code flow (GET /authorize).",
+    "tokenUrl": "Where clients exchange credentials, codes, or refresh tokens for tokens (POST /token).",
+    "clients": "Client ID and secret pairs registered with this server. Import copies one into a new client configuration.",
+    "clientId": "Generated ID a client sends to identify itself to this server.",
+    "clientSecret": "Generated secret a client sends with its client ID to authenticate at the token endpoint.",
+    "users": "Accounts that can sign in on the login page when user-based access is on.",
+    "resource": "A protected endpoint for testing tokens. Call it with an access token in an Authorization: Bearer header."
+  },
+  "serverSettings": {
+    "redirectUrlOverride": "When set, the server redirects here after authorization instead of to the redirect_uri the client sent. Must be an absolute http(s) URL.",
+    "accessTokenExpiry": "Lifetime of issued access tokens, in seconds. Sets the JWT exp claim and expires_in in the token response.",
+    "refreshTokenExpiry": "Lifetime of issued refresh tokens, in seconds. Refresh tokens are only issued when the scope includes offline_access.",
+    "userBased": "When on, /authorize shows a login page instead of a consent page, and issued tokens carry the signed-in username."
+  },
+  "serverUser": {
+    "username": "The name the user signs in with on the login page. Leading and trailing spaces are removed.",
+    "password": "The password the user signs in with. It is stored and shown as plain text, since this is a test tool.",
+    "userData": "Text that GET /resource returns as userData for tokens issued to this user. Leave empty for the default."
+  },
+  "clientConfig": {
+    "name": "A label for this configuration in the app. It is not sent in any request.",
+    "issuerUrl": "Base URL of the authorization server. Server metadata is fetched from <issuer>/.well-known/oauth-authorization-server.",
+    "useServerMetadata": "Fill the authorization and token URLs from the server's RFC 8414 metadata instead of typing them in.",
+    "authorizationUrl": "The server's authorization endpoint. The browser is opened here for the authorization code flow.",
+    "tokenUrl": "The server's token endpoint, where codes, client credentials, and refresh tokens are exchanged for tokens.",
+    "clientId": "The client ID registered with the authorization server. Sent as client_id.",
+    "clientSecret": "The client secret registered with the authorization server. Sent as client_secret in the request body.",
+    "scopes": "Space-separated scopes to request. Include offline_access to get a refresh token from servers that support it.",
+    "scopesSupported": "Scopes the server lists in its metadata (scopes_supported).",
+    "grantType": "Authorization Code opens a browser so a user can approve access, then exchanges the code (with PKCE) for tokens. Client Credentials requests a token directly with the client ID and secret, with no user involved.",
+    "callbackUrl": "The redirect_uri this app listens on for the authorization code. The server must allow it, or redirect here through an override.",
+    "extraParams": "Extra parameters added to the authorization, token, and client credentials requests, such as audience or resource.",
+    "metadata": "The server's RFC 8414 authorization server metadata, fetched from the issuer's well-known URL."
+  },
+  "paramSection": {
+    "authorize": "Parameters sent to the authorization endpoint. Uncheck one to leave it out and see how the server reacts.",
+    "token": "Parameters sent when exchanging the authorization code. Uncheck one to leave it out and see how the server reacts.",
+    "send": "Parameters sent in the client credentials token request. Uncheck one to leave it out and see how the server reacts.",
+    "refresh": "Parameters sent when using the stored refresh token. Uncheck one to leave it out and see how the server reacts."
+  },
+  "param": {
+    "response_type": "Always code: asks the server for an authorization code.",
+    "grant_type": "Tells the token endpoint which kind of grant is being exchanged.",
+    "client_id": "Identifies the client to the server.",
+    "client_secret": "Authenticates the client to the server, sent in the request body.",
+    "redirect_uri": "Where the server sends the browser back with the code. The token request must repeat the same value.",
+    "state": "A random value the server echoes back, checked on return to protect against forged callbacks.",
+    "scope": "The scopes being requested.",
+    "code_challenge": "PKCE: a SHA-256 hash of the code verifier, sent with the authorization request.",
+    "code_challenge_method": "PKCE: how the code challenge was derived. Always S256.",
+    "code_verifier": "PKCE: the secret behind the code challenge, proving the token request comes from the same client.",
+    "refresh_token": "The stored refresh token being exchanged for a new access token."
+  }
+}

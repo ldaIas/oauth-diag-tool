@@ -2,11 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ClientConfigListUi, DisabledParamsField, ExpandableSection } from "../hooks/useClientConfigListUi";
+import { helpText } from "../lib/help";
 import { sortedEntries } from "../lib/params";
 import { matchesSearch } from "../lib/search";
 import type { ParsedClientConfig } from "../lib/types";
 import { useAppState } from "../state";
 import { AuthorizeButtons, AuthResponseView, MetadataStateView } from "./AuthResults";
+import { HelpTip } from "./HelpTip";
 import { CardToggle, chevron, Detail, SearchBox } from "./shared";
 import { ToggleSection } from "./ToggleSection";
 
@@ -77,10 +79,17 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
   const isAuthCode = config.grantType === "authorization_code";
   const extraKeys = sortedEntries(config.extraParams).map(([key]) => key);
 
-  function section(title: string, expandable: ExpandableSection, field: DisabledParamsField, params: readonly string[]) {
+  function section(
+    title: string,
+    help: string,
+    expandable: ExpandableSection,
+    field: DisabledParamsField,
+    params: readonly string[],
+  ) {
     return (
       <ToggleSection
         title={title}
+        help={help}
         expanded={ui.isExpanded(expandable, config.id)}
         params={params}
         disabledParams={config[field]}
@@ -127,29 +136,38 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
         </div>
       </div>
       <div className="server-card-details">
-        <Detail label="Issuer" value={config.issuerUrl} />
-        <Detail label="Authorization" value={config.authorizationUrl} />
-        <Detail label="Token" value={config.tokenUrl} />
-        <Detail label="Client ID" value={config.clientId} />
-        <Detail label="Secret" value={config.clientSecret} />
-        {isAuthCode && callbackUrl !== "" && <Detail label="Callback URL" value={callbackUrl} />}
-        {config.scopes !== "" && <Detail label="Scopes" value={config.scopes} />}
-        {extraKeys.length > 0 && <Detail label="Extra Params" value={extraParamsSummary(config.extraParams)} />}
-        {config.scopesSupported !== "" && <Detail label="Scopes Supported" value={config.scopesSupported} />}
+        <Detail label="Issuer" value={config.issuerUrl} help="clientConfig.issuerUrl" />
+        <Detail label="Authorization" value={config.authorizationUrl} help="clientConfig.authorizationUrl" />
+        <Detail label="Token" value={config.tokenUrl} help="clientConfig.tokenUrl" />
+        <Detail label="Client ID" value={config.clientId} help="clientConfig.clientId" />
+        <Detail label="Secret" value={config.clientSecret} help="clientConfig.clientSecret" />
+        {isAuthCode && callbackUrl !== "" && (
+          <Detail label="Callback URL" value={callbackUrl} help="clientConfig.callbackUrl" />
+        )}
+        {config.scopes !== "" && <Detail label="Scopes" value={config.scopes} help="clientConfig.scopes" />}
+        {extraKeys.length > 0 && (
+          <Detail label="Extra Params" value={extraParamsSummary(config.extraParams)} help="clientConfig.extraParams" />
+        )}
+        {config.scopesSupported !== "" && (
+          <Detail label="Scopes Supported" value={config.scopesSupported} help="clientConfig.scopesSupported" />
+        )}
       </div>
       {isAuthCode ? (
         <div>
-          {section("Authorize Parameters", "params", "disabledParams", [...AUTHORIZE_PARAMS, ...extraKeys])}
-          {section("Token Parameters", "tokenParams", "disabledTokenParams", [...TOKEN_PARAMS, ...extraKeys])}
+          {section("Authorize Parameters", helpText("paramSection.authorize"), "params", "disabledParams", [...AUTHORIZE_PARAMS, ...extraKeys])}
+          {section("Token Parameters", helpText("paramSection.token"), "tokenParams", "disabledTokenParams", [...TOKEN_PARAMS, ...extraKeys])}
         </div>
       ) : (
-        section("Send Parameters", "params", "disabledParams", [...SEND_PARAMS, ...extraKeys])
+        section("Send Parameters", helpText("paramSection.send"), "params", "disabledParams", [...SEND_PARAMS, ...extraKeys])
       )}
       {config.refreshToken !== "" &&
-        section("Refresh Token Parameters", "refreshParams", "disabledRefreshParams", REFRESH_PARAMS)}
+        section("Refresh Token Parameters", helpText("paramSection.refresh"), "refreshParams", "disabledRefreshParams", REFRESH_PARAMS)}
       <div className="param-toggles">
-        <span className="expandable-toggle" onClick={() => ui.toggleSection("metadata", config.id)}>
-          {`${chevron(metadataExpanded)} Authorization Server Metadata`}
+        <span className="label-with-help">
+          <span className="expandable-toggle" onClick={() => ui.toggleSection("metadata", config.id)}>
+            {`${chevron(metadataExpanded)} Authorization Server Metadata`}
+          </span>
+          <HelpTip text={helpText("clientConfig.metadata")} />
         </span>
         {metadataExpanded && (
           <div className="metadata-section-content">

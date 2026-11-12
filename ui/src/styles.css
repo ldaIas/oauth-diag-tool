@@ -1024,3 +1024,46 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   color: var(--accent);
   background: var(--accent-dim);
 }
+
+/* Field help */
+.label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.help-tip {
+  background: none;
+  border: none;
+  padding: 0;
+  font-family: var(--font);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-dim);
+  text-transform: none;
+  cursor: help;
+  transition: color 0.15s;
+}
+
+.help-tip:hover,
+.help-tip:focus-visible {
+  color: var(--accent);
+  outline: none;
+}
+
+.help-tooltip {
+  position: fixed;
+  z-index: 1000;
+  padding: 8px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border-hi);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  font-family: var(--font);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text);
+  letter-spacing: 0.02em;
+  text-transform: none;
+  pointer-events: none;
+}
