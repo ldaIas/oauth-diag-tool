@@ -1,7 +1,7 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ServerConfig } from "../bindings";
+import type { ServerConfig, ServerSettingsInput } from "../bindings";
 
 /** Draft of a server's settings; expiries stay raw text so the inputs are not reformatted while typing. */
 export interface SettingsEdit {
@@ -9,14 +9,13 @@ export interface SettingsEdit {
   accessTokenExpiry: string;
   refreshTokenExpiry: string;
   userBased: boolean;
+  cimdEnabled: boolean;
+  dcrEnabled: boolean;
+  cimdAllowHttp: boolean;
+  mcpEnabled: boolean;
 }
 
-export interface ServerSettings {
-  redirectUrlOverride: string;
-  accessTokenExpiry: number;
-  refreshTokenExpiry: number;
-  userBased: boolean;
-}
+export type ServerSettings = ServerSettingsInput;
 
 const DEFAULT_ACCESS_TOKEN_EXPIRY = 3600;
 const DEFAULT_REFRESH_TOKEN_EXPIRY = 86400;
@@ -32,6 +31,10 @@ export function settingsEditFor(server: ServerConfig): SettingsEdit {
     accessTokenExpiry: String(server.accessTokenExpiry),
     refreshTokenExpiry: String(server.refreshTokenExpiry),
     userBased: server.userBased,
+    cimdEnabled: server.cimdEnabled,
+    dcrEnabled: server.dcrEnabled,
+    cimdAllowHttp: server.cimdAllowHttp,
+    mcpEnabled: server.mcpEnabled,
   };
 }
 
@@ -41,5 +44,9 @@ export function toServerSettings(edit: SettingsEdit): ServerSettings {
     accessTokenExpiry: parseIntOr(edit.accessTokenExpiry, DEFAULT_ACCESS_TOKEN_EXPIRY),
     refreshTokenExpiry: parseIntOr(edit.refreshTokenExpiry, DEFAULT_REFRESH_TOKEN_EXPIRY),
     userBased: edit.userBased,
+    cimdEnabled: edit.cimdEnabled,
+    dcrEnabled: edit.dcrEnabled,
+    cimdAllowHttp: edit.cimdAllowHttp,
+    mcpEnabled: edit.mcpEnabled,
   };
 }

@@ -1,15 +1,19 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import { removeAt, updateAt, type ClientConfigFormModel, type ExtraParamRow } from "../lib/clientConfigForm";
+import type { DiscoveryStep } from "../bindings";
+import { canFetchMetadata, metadataSource, removeAt, updateAt, type ClientConfigFormModel, type ExtraParamRow } from "../lib/clientConfigForm";
 import { helpText, type HelpKey } from "../lib/help";
 import { useAppState } from "../state";
+import { DiscoveryTraceView } from "./AuthResults";
 import { HelpTip } from "./HelpTip";
+import { RegistrationFields } from "./RegistrationFields";
 import { FieldLabel, FormInput } from "./shared";
 
 interface ClientConfigFormProps {
   model: ClientConfigFormModel;
   metadataError: string | null;
+  discoveryTrace: readonly DiscoveryStep[];
   pullingMetadata: boolean;
   onPullMetadata: () => void;
   onChange: (model: ClientConfigFormModel) => void;
@@ -17,7 +21,7 @@ interface ClientConfigFormProps {
   onCancel: () => void;
 }
 
-export function ClientConfigForm({ model, metadataError, pullingMetadata, onPullMetadata, onChange, onSubmit, onCancel }: ClientConfigFormProps) {
+export function ClientConfigForm({ model, metadataError, discoveryTrace, pullingMetadata, onPullMetadata, onChange, onSubmit, onCancel }: ClientConfigFormProps) {
   const { callbackUrl } = useAppState();
   const editing = model.editingId !== null;
 
@@ -34,7 +38,15 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
             <span className="error-banner-text">{metadataError}</span>
           </div>
         )}
+        {model.useServerMetadata && <DiscoveryTraceView trace={discoveryTrace} />}
         <FormInput label="Name" value={model.name} placeholder="My Client Config" help="clientConfig.name" onChange={set("name")} />
+        <FormInput
+          label="Resource URL (optional)"
+          value={model.resourceUrl}
+          placeholder="https://mcp.example.com/mcp"
+          help="clientConfig.resourceUrl"
+          onChange={set("resourceUrl")}
+        />
         <FormInput
           label="Issuer URL"
           value={model.issuerUrl}
@@ -56,7 +68,7 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
             <button
               type="button"
               className="btn-import"
-              disabled={pullingMetadata || model.issuerUrl.trim() === ""}
+              disabled={pullingMetadata || !canFetchMetadata(metadataSource(model))}
               onClick={onPullMetadata}
             >
               {pullingMetadata ? "Pulling..." : "\u2913 Pull Now"}
@@ -85,14 +97,7 @@ export function ClientConfigForm({ model, metadataError, pullingMetadata, onPull
             onChange={set("tokenUrl")}
           />
         )}
-        <FormInput label="Client ID" value={model.clientId} placeholder="client-id" help="clientConfig.clientId" onChange={set("clientId")} />
-        <FormInput
-          label="Client Secret"
-          value={model.clientSecret}
-          placeholder="client-secret"
-          help="clientConfig.clientSecret"
-          onChange={set("clientSecret")}
-        />
+        <RegistrationFields model={model} onChange={onChange} />
         <FormInput label="Scopes" value={model.scopes} placeholder="openid profile email" help="clientConfig.scopes" onChange={set("scopes")} />
         <div className="form-field">
           <FieldLabel className="form-label" label="Grant Type" help="clientConfig.grantType" />

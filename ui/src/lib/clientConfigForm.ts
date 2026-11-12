@@ -1,8 +1,9 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ServerMetadataResponse } from "../bindings";
+import type { RegistrationMode, ServerMetadataResponse, TokenAuthMethod } from "../bindings";
 import { sortedEntries } from "./params";
+import { credentialStyle, registrationSupport, type CredentialStyle, type RegistrationResult, type RegistrationSupport } from "./registration";
 import type { ClientConfigFields, ParsedClientConfig } from "./types";
 
 export interface ExtraParamRow {
@@ -26,9 +27,30 @@ export interface ClientConfigFormModel {
   disabledTokenParams: Record<string, boolean>;
   scopesSupported: string;
   disabledRefreshParams: Record<string, boolean>;
+  resourceUrl: string;
+  registrationMode: RegistrationMode;
+  tokenAuthMethod: TokenAuthMethod;
+  serveClientMetadata: boolean;
+  /** What the last metadata fetch said about registration; null until metadata has been pulled in this form. */
+  registration: RegistrationSupport | null;
   useServerMetadata: boolean;
-  /** Issuer URL whose metadata filled the endpoint fields via "Pull Now"; null when nothing has been pulled. */
-  pulledIssuerUrl: string | null;
+  /** What the last "Pull Now" fetched metadata from; null when nothing has been pulled. */
+  pulledFrom: MetadataSource | null;
+}
+
+/** The inputs that decide which metadata is fetched; the issuer only matters when there is no resource URL. */
+export interface MetadataSource {
+  issuerUrl: string;
+  resourceUrl: string;
+}
+
+/** The fields discovery fills in; shared by the form model and saved configs. */
+interface MetadataTarget {
+  issuerUrl: string;
+  authorizationUrl: string;
+  tokenUrl: string;
+  scopes: string;
+  scopesSupported: string;
 }
 
 export interface ImportedClientFields {
@@ -56,8 +78,13 @@ export function initClientConfigForm(): ClientConfigFormModel {
     disabledTokenParams: {},
     scopesSupported: "",
     disabledRefreshParams: {},
+    resourceUrl: "",
+    registrationMode: "preregistered",
+    tokenAuthMethod: "none",
+    serveClientMetadata: false,
+    registration: null,
     useServerMetadata: false,
-    pulledIssuerUrl: null,
+    pulledFrom: null,
   };
 }
 
@@ -89,27 +116,84 @@ export function initFromEdit(config: ParsedClientConfig): ClientConfigFormModel 
     disabledTokenParams: config.disabledTokenParams,
     scopesSupported: config.scopesSupported,
     disabledRefreshParams: config.disabledRefreshParams,
+    resourceUrl: config.resourceUrl,
+    registrationMode: config.registrationMode,
+    tokenAuthMethod: config.tokenAuthMethod,
+    serveClientMetadata: config.serveClientMetadata,
+    registration: null,
     useServerMetadata: false,
-    pulledIssuerUrl: null,
+    pulledFrom: null,
   };
 }
 
-/** True when saving must fetch metadata because the form does not already hold the current issuer's. */
-export function needsMetadataFetch(form: ClientConfigFormModel): boolean {
-  return form.useServerMetadata && form.pulledIssuerUrl !== form.issuerUrl;
+export function metadataSource(form: ClientConfigFormModel): MetadataSource {
+  return { issuerUrl: form.issuerUrl, resourceUrl: form.resourceUrl };
 }
 
-export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetadataResponse): ClientConfigFormModel {
+export function sameMetadataSource(a: MetadataSource, b: MetadataSource): boolean {
+  return a.issuerUrl === b.issuerUrl && a.resourceUrl === b.resourceUrl;
+}
+
+/** True when the form can fetch metadata: discovery needs a resource URL or an issuer URL to start from. */
+export function canFetchMetadata(source: MetadataSource): boolean {
+  return source.resourceUrl.trim() !== "" || source.issuerUrl.trim() !== "";
+}
+
+/** True when saving must fetch metadata because the form does not already hold the current source's. */
+export function needsMetadataFetch(form: ClientConfigFormModel): boolean {
+  return form.useServerMetadata && (form.pulledFrom === null || !sameMetadataSource(form.pulledFrom, metadataSource(form)));
+}
+
+/**
+ * Fills the issuer and endpoints from fetched metadata. Scopes the user already typed are kept;
+ * an empty scopes field takes the scope the resource's challenge asked for, if any.
+ */
+export function mergeMetadata<T extends MetadataTarget>(target: T, metadata: ServerMetadataResponse): T {
   return {
-    ...form,
+    ...target,
+    issuerUrl: metadata.issuerUrl,
     authorizationUrl: metadata.authorizationEndpoint,
     tokenUrl: metadata.tokenEndpoint,
     scopesSupported: metadata.scopesSupported,
-    pulledIssuerUrl: form.issuerUrl,
+    scopes: target.scopes === "" ? metadata.challengeScope : target.scopes,
   };
 }
 
-/** Rows with an empty key are dropped; for duplicate keys the later row wins. */
+export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetadataResponse): ClientConfigFormModel {
+  const merged = mergeMetadata(form, metadata);
+  return {
+    ...merged,
+    registration: registrationSupport(metadata),
+    pulledFrom: { issuerUrl: merged.issuerUrl, resourceUrl: form.resourceUrl },
+  };
+}
+
+export function formCredentialStyle(form: ClientConfigFormModel): CredentialStyle {
+  return credentialStyle(form.registrationMode, form.tokenAuthMethod);
+}
+
+/** True when the form can ask a discovered registration endpoint to register this client. */
+export function canRegister(form: ClientConfigFormModel): boolean {
+  return form.registration !== null && form.registration.registrationEndpoint !== "" && form.name.trim() !== "";
+}
+
+/**
+ * Takes the client a registration endpoint issued. The method the server confirmed wins over the
+ * one requested, since it decides whether a secret is sent; a public client keeps no secret.
+ */
+export function applyRegistration(
+  form: ClientConfigFormModel,
+  registered: Extract<RegistrationResult, { kind: "registered" }>,
+): ClientConfigFormModel {
+  return {
+    ...form,
+    clientId: registered.clientId,
+    clientSecret: registered.clientSecret,
+    tokenAuthMethod: registered.tokenAuthMethod ?? form.tokenAuthMethod,
+  };
+}
+
+/** Rows with an empty key are dropped; for duplicate keys the later row wins. The resource URL is trimmed so blank means none. */
 export function toConfigInput(form: ClientConfigFormModel): ClientConfigFields {
   return {
     name: form.name,
@@ -129,6 +213,10 @@ export function toConfigInput(form: ClientConfigFormModel): ClientConfigFields {
     disabledTokenParams: form.disabledTokenParams,
     scopesSupported: form.scopesSupported,
     disabledRefreshParams: form.disabledRefreshParams,
+    resourceUrl: form.resourceUrl.trim(),
+    registrationMode: form.registrationMode,
+    tokenAuthMethod: form.tokenAuthMethod,
+    serveClientMetadata: form.serveClientMetadata,
   };
 }
 

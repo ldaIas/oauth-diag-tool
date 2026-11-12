@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "vitest";
-import { decodeJwt, splitAtAccessToken } from "./accessToken";
+import { decodeJwt, findAccessToken, splitAtAccessToken } from "./accessToken";
 
 const b64url = (value: unknown) => btoa(JSON.stringify(value)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 const jwt = `${b64url({ alg: "HS256" })}.${b64url({ sub: "abc", n: 1 })}.sig`;
@@ -23,6 +23,17 @@ describe("splitAtAccessToken", () => {
     expect(splitAtAccessToken("[]")).toBeNull();
     expect(splitAtAccessToken('{"access_token": 5}')).toBeNull();
     expect(splitAtAccessToken('{"error": "x"}')).toBeNull();
+  });
+});
+
+describe("findAccessToken", () => {
+  test("returns the access token from a pretty-printed token response", () => {
+    expect(findAccessToken(JSON.stringify({ access_token: "abc", token_type: "Bearer" }, null, 2))).toBe("abc");
+  });
+
+  test("returns null when the body has no access token", () => {
+    expect(findAccessToken('{\n  "error": "invalid_grant"\n}')).toBeNull();
+    expect(findAccessToken("not json")).toBeNull();
   });
 });
 

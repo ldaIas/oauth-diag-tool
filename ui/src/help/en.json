@@ -5,17 +5,27 @@
     "issuerUrl": "The server's base URL. Clients use it as the issuer, and its metadata is served at /.well-known/oauth-authorization-server.",
     "authorizationUrl": "Where clients send the browser for the authorization code flow (GET /authorize).",
     "tokenUrl": "Where clients exchange credentials, codes, or refresh tokens for tokens (POST /token).",
-    "clients": "Client ID and secret pairs registered with this server. Import copies one into a new client configuration.",
+    "clients": "Client ID and secret pairs registered with this server, added here or through dynamic client registration. Import copies one into a new client configuration.",
     "clientId": "Generated ID a client sends to identify itself to this server.",
     "clientSecret": "Generated secret a client sends with its client ID to authenticate at the token endpoint.",
+    "clientName": "The client_name the client gave when it registered. It is shown on the consent page.",
+    "redirectUris": "The redirect URIs the client registered. Authorization requests must use one of them exactly.",
+    "authMethod": "How the client authenticates at the token endpoint. none means a public client: it sends only its client ID and must use PKCE.",
+    "dynamicClient": "Registered by the client itself with POST /register (RFC 7591).",
+    "metadataFetches": "Recent fetches of Client ID Metadata Documents, newest first. A client whose client_id is an https URL is identified by the JSON document served at that URL. Documents served from the cache are not listed.",
     "users": "Accounts that can sign in on the login page when user-based access is on.",
+    "mcpEndpoint": "The MCP endpoint and a command that registers it with Claude Code. Tokens must be issued for the /mcp resource, which MCP clients request automatically.",
     "resource": "A protected endpoint for testing tokens. Call it with an access token in an Authorization: Bearer header."
   },
   "serverSettings": {
     "redirectUrlOverride": "When set, the server redirects here after authorization instead of to the redirect_uri the client sent. Must be an absolute http(s) URL.",
     "accessTokenExpiry": "Lifetime of issued access tokens, in seconds. Sets the JWT exp claim and expires_in in the token response.",
     "refreshTokenExpiry": "Lifetime of issued refresh tokens, in seconds. Refresh tokens are only issued when the scope includes offline_access.",
-    "userBased": "When on, /authorize shows a login page instead of a consent page, and issued tokens carry the signed-in username."
+    "userBased": "When on, /authorize shows a login page instead of a consent page, and issued tokens carry the signed-in username.",
+    "cimdEnabled": "Accept a URL as client_id and fetch the client's metadata document from it (Client ID Metadata Documents). The server's metadata then advertises client_id_metadata_document_supported.",
+    "dcrEnabled": "Serve POST /register so clients can register themselves (RFC 7591). The server's metadata then advertises a registration_endpoint.",
+    "mcpEnabled": "Serve a minimal MCP server at /mcp (Streamable HTTP) protected by this server's tokens, so an MCP client can run the whole OAuth flow against it. Its protected resource metadata is served at /.well-known/oauth-protected-resource/mcp, and the root form then describes /mcp instead of /resource.",
+    "cimdAllowHttp": "Also accept http:// client ID URLs when the host is localhost, 127.0.0.1, or [::1], for testing a client on this machine. The specification requires https."
   },
   "serverUser": {
     "username": "The name the user signs in with on the login page. Leading and trailing spaces are removed.",
@@ -24,18 +34,35 @@
   },
   "clientConfig": {
     "name": "A label for this configuration in the app. It is not sent in any request.",
-    "issuerUrl": "Base URL of the authorization server. Server metadata is fetched from <issuer>/.well-known/oauth-authorization-server.",
-    "useServerMetadata": "Fill the authorization and token URLs from the server's RFC 8414 metadata instead of typing them in.",
+    "resourceUrl": "The protected resource (for example an MCP server URL). It is sent as the RFC 8707 resource parameter, and with metadata turned on it is where discovery starts. Leave empty for none.",
+    "issuerUrl": "Base URL of the authorization server. Metadata is fetched from its RFC 8414 or OpenID Connect well-known URL. With a resource URL and metadata turned on, the issuer is discovered from the resource instead.",
+    "useServerMetadata": "Fill the issuer, authorization and token URLs from server metadata instead of typing them in. With a resource URL, discovery starts at the resource; otherwise at the issuer.",
     "authorizationUrl": "The server's authorization endpoint. The browser is opened here for the authorization code flow.",
     "tokenUrl": "The server's token endpoint, where codes, client credentials, and refresh tokens are exchanged for tokens.",
     "clientId": "The client ID registered with the authorization server. Sent as client_id.",
-    "clientSecret": "The client secret registered with the authorization server. Sent as client_secret in the request body.",
+    "clientSecret": "The client secret registered with the authorization server. Sent as client_secret in the request body. Not used by public clients (Client ID Metadata Document, or Dynamic Client Registration with auth method none).",
     "scopes": "Space-separated scopes to request. Include offline_access to get a refresh token from servers that support it.",
-    "scopesSupported": "Scopes the server lists in its metadata (scopes_supported).",
+    "scopesSupported": "Scopes from discovery: the resource's challenge scope, else the resource's scopes_supported, else the server's scopes_supported.",
     "grantType": "Authorization Code opens a browser so a user can approve access, then exchanges the code (with PKCE) for tokens. Client Credentials requests a token directly with the client ID and secret, with no user involved.",
     "callbackUrl": "The redirect_uri this app listens on for the authorization code. The server must allow it, or redirect here through an override.",
-    "extraParams": "Extra parameters added to the authorization, token, and client credentials requests, such as audience or resource.",
-    "metadata": "The server's RFC 8414 authorization server metadata, fetched from the issuer's well-known URL."
+    "extraParams": "Extra parameters added to the authorization, token, and client credentials requests, such as audience. A resource entry here replaces the one sent for the resource URL.",
+    "metadata": "The server's RFC 8414 or OpenID Connect metadata, fetched from the issuer's well-known URL. With a resource URL, discovery starts at the resource and the trace lists every URL tried.",
+    "callResource": "Sends a GET to the resource URL with the latest access token as an Authorization: Bearer header and shows the response.",
+    "probeMcp": "Treats the resource URL as an MCP endpoint and sends initialize, notifications/initialized and tools/list with the latest access token, showing each step. Stops at the first failure.",
+    "probeResult": "Each MCP request the probe sent, with the status, the response headers that matter (WWW-Authenticate, Mcp-Session-Id) and the JSON-RPC response. Responses sent as event streams are reduced to the matching message.",
+    "resourceResponse": "The status, headers, and body the resource returned for the access token.",
+    "discoveryTrace": "Each URL tried while discovering metadata, with the status it returned and what it meant. A 401 on the resource and 404s on well-known URLs are normal steps.",
+    "protectedResourceMetadata": "The resource's RFC 9728 metadata, which names the authorization servers that issue tokens for it.",
+    "registrationMode": "How this client gets its client ID. Pre-registered: you type the ID and secret the server issued. Client ID Metadata Document: the ID is the URL of a JSON document you host, the method the MCP authorization spec recommends. Dynamic Client Registration: this app registers itself at the server's registration endpoint (RFC 7591).",
+    "registrationSupport": "The registration methods the server advertises in its metadata: client_id_metadata_document_supported and registration_endpoint. A method that is not advertised may still work.",
+    "tokenAuthMethod": "How the registered client authenticates at the token endpoint. none makes a public client that sends only client_id and relies on PKCE. client_secret_post sends the issued secret in the request body; client_secret_basic sends it in an Authorization: Basic header.",
+    "clientIdUrl": "The URL of the client metadata document. The server fetches it to learn the client's name and redirect URIs, so the document's client_id must equal this URL. Servers reject URLs with a fragment, credentials, dot segments, or no path.",
+    "serveClientMetadata": "While an authorization runs, the callback listener also serves the generated document at /client-metadata/<config id> and keeps serving it until the token exchange ends. This only works with authorization servers that can reach 127.0.0.1 and accept http client IDs, such as this app's own server with Allow http client ID URLs on. It never works with remote production servers.",
+    "useLocalUrl": "Sets the client ID to this app's local document URL, http://127.0.0.1:<callback port>/client-metadata/<config id>. Available after the config is saved, because the URL contains its id.",
+    "clientMetadataDocument": "The document to host at the client ID URL. The redirect URI is this app's callback URL and the client is public (token_endpoint_auth_method none), so authorization uses PKCE and no secret is sent.",
+    "verifyDocument": "Fetches the client ID URL and applies the rules this app's server uses: no redirects, a size limit, a matching client_id, listed redirect URIs, and no shared secret. It also checks that this app's callback URL is listed. A locally served document is generated instead of fetched.",
+    "registerClient": "Sends a registration request to the discovered registration endpoint with this configuration's name, this app's callback URL, the authorization code and refresh token grants, the chosen auth method, and the scopes. On success the client ID, and the secret if one was issued, are filled in here; save to keep them. Pull metadata first to discover the endpoint.",
+    "registrationResponse": "The status, headers, and body the registration endpoint returned. Errors carry an RFC 7591 error code and description."
   },
   "paramSection": {
     "authorize": "Parameters sent to the authorization endpoint. Uncheck one to leave it out and see how the server reacts.",
@@ -54,6 +81,7 @@
     "code_challenge": "PKCE: a SHA-256 hash of the code verifier, sent with the authorization request.",
     "code_challenge_method": "PKCE: how the code challenge was derived. Always S256.",
     "code_verifier": "PKCE: the secret behind the code challenge, proving the token request comes from the same client.",
-    "refresh_token": "The stored refresh token being exchanged for a new access token."
+    "refresh_token": "The stored refresh token being exchanged for a new access token.",
+    "resource": "RFC 8707 resource indicator: the resource URL the token is meant for. Servers that bind tokens to a resource may require it or reject it."
   }
 }

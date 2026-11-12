@@ -1,14 +1,17 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import { commands, type ServerConfig } from "./bindings";
+import { commands, type ServerConfig, type TokenAuthMethod } from "./bindings";
 import {
   toAuthOutcome,
   toMetadataOutcome,
+  toVerifyOutcome,
   type AuthOutcome,
   type CommandResult,
   type MetadataOutcome,
+  type VerifyOutcome,
 } from "./lib/authResult";
+import { toProbeOutcome, type ProbeOutcome } from "./lib/mcpProbe";
 import { parseClientConfig, toClientConfigInput } from "./lib/convert";
 import type { ServerSettings } from "./lib/serverSettings";
 import type { NewUser, UserEdit } from "./lib/serverUsers";
@@ -47,7 +50,16 @@ export interface Api {
   cancelAuthorization(id: number): Promise<boolean>;
   authorizeClient(id: number): Promise<AuthOutcome>;
   refreshToken(id: number): Promise<AuthOutcome>;
-  fetchServerMetadata(issuerUrl: string): Promise<MetadataOutcome>;
+  /** Starts discovery from `resourceUrl` when it is non-empty, otherwise from `issuerUrl`. */
+  fetchServerMetadata(issuerUrl: string, resourceUrl: string): Promise<MetadataOutcome>;
+  /** GETs the config's resource URL with the access token. */
+  callResource(id: number, accessToken: string): Promise<AuthOutcome>;
+  /** Runs the MCP initialize / initialized / tools/list sequence against the config's resource URL. */
+  probeMcp(id: number, accessToken: string): Promise<ProbeOutcome>;
+  /** POSTs an RFC 7591 registration request for this app to the endpoint; error bodies are responses, not failures. */
+  registerClient(registrationEndpoint: string, clientName: string, scopes: string, method: TokenAuthMethod): Promise<AuthOutcome>;
+  /** Fetches or generates the config's client metadata document and checks it. */
+  verifyClientDocument(id: number): Promise<VerifyOutcome>;
 }
 
 /** `typedError` rethrows JS `Error`s (IPC or serialization failures), so fold those into the error arm too. */
@@ -121,14 +133,7 @@ export function createApi(callbacks: ApiCallbacks): Api {
     updateServerSettings: (id, settings) =>
       mutate(
         "update_server_settings",
-        () =>
-          commands.updateServerSettings(
-            id,
-            settings.redirectUrlOverride,
-            settings.accessTokenExpiry,
-            settings.refreshTokenExpiry,
-            settings.userBased,
-          ),
+        () => commands.updateServerSettings(id, settings),
         loadServerConfigs,
       ),
     addUserToServer: (serverId, user) =>
@@ -157,8 +162,28 @@ export function createApi(callbacks: ApiCallbacks): Api {
     async refreshToken(id) {
       return toAuthOutcome(await unreported("refresh_token", () => commands.refreshToken(id)));
     },
-    async fetchServerMetadata(issuerUrl) {
-      return toMetadataOutcome(await unreported("fetch_server_metadata", () => commands.fetchServerMetadata(issuerUrl)));
+    async fetchServerMetadata(issuerUrl, resourceUrl) {
+      try {
+        return toMetadataOutcome(await commands.fetchServerMetadata(issuerUrl, resourceUrl));
+      } catch (err) {
+        // IPC or serialization failures never reach the backend, so there is no trace to show.
+        console.error("fetch_server_metadata failed:", err);
+        return { kind: "failure", error: String(err), trace: [] };
+      }
+    },
+    async callResource(id, accessToken) {
+      return toAuthOutcome(await unreported("call_resource", () => commands.callResource(id, accessToken)));
+    },
+    async probeMcp(id, accessToken) {
+      return toProbeOutcome(await unreported("probe_mcp", () => commands.probeMcp(id, accessToken)));
+    },
+    async registerClient(registrationEndpoint, clientName, scopes, method) {
+      return toAuthOutcome(
+        await unreported("register_client", () => commands.registerClient(registrationEndpoint, clientName, scopes, method)),
+      );
+    },
+    async verifyClientDocument(id) {
+      return toVerifyOutcome(await unreported("verify_client_document", () => commands.verifyClientDocument(id)));
     },
   };
 }

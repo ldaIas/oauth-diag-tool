@@ -1,6 +1,8 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import type { RegistrationMode, TokenAuthMethod } from "../bindings";
+
 /** The persistable client config fields, with param maps already parsed. */
 export interface ClientConfigFields {
   name: string;
@@ -16,6 +18,13 @@ export interface ClientConfigFields {
   disabledTokenParams: Record<string, boolean>;
   scopesSupported: string;
   disabledRefreshParams: Record<string, boolean>;
+  /** Empty means the config has no protected resource. */
+  resourceUrl: string;
+  registrationMode: RegistrationMode;
+  /** The method a DCR client registered with; only `dcr` mode reads it. */
+  tokenAuthMethod: TokenAuthMethod;
+  /** In `cimd` mode, whether the callback listener serves the config's metadata document. */
+  serveClientMetadata: boolean;
 }
 
 export interface ParsedClientConfig extends ClientConfigFields {

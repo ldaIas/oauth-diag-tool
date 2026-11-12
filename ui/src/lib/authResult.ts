@@ -1,13 +1,17 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { AuthResponse, ServerMetadataResponse } from "../bindings";
+import type { AuthResponse, CheckResult, DiscoveryFailure, DiscoveryStep, ServerMetadataResponse } from "../bindings";
 
-export type CommandResult<T> = { status: "ok"; data: T } | { status: "error"; error: string };
+export type CommandResult<T, E = string> = { status: "ok"; data: T } | { status: "error"; error: E };
 
 export type AuthOutcome = { kind: "success"; response: AuthResponse } | { kind: "failure"; error: string };
 
-export type MetadataOutcome = { kind: "success"; metadata: ServerMetadataResponse } | { kind: "failure"; error: string };
+export type MetadataOutcome =
+  | { kind: "success"; metadata: ServerMetadataResponse }
+  | { kind: "failure"; error: string; trace: DiscoveryStep[] };
+
+export type VerifyOutcome = { kind: "success"; checks: CheckResult[] } | { kind: "failure"; error: string };
 
 /** Non-JSON bodies (form-encoded errors, HTML pages) are shown verbatim. */
 export function prettyPrintBody(body: string): string {
@@ -25,10 +29,18 @@ export function toAuthOutcome(result: CommandResult<AuthResponse>): AuthOutcome 
   return { kind: "success", response: { ...result.data, body: prettyPrintBody(result.data.body) } };
 }
 
-export function toMetadataOutcome(result: CommandResult<ServerMetadataResponse>): MetadataOutcome {
+export function toMetadataOutcome(result: CommandResult<ServerMetadataResponse, DiscoveryFailure>): MetadataOutcome {
   return result.status === "error"
-    ? { kind: "failure", error: result.error }
+    ? { kind: "failure", error: result.error.error, trace: result.error.trace }
     : { kind: "success", metadata: result.data };
+}
+
+export function toVerifyOutcome(result: CommandResult<CheckResult[]>): VerifyOutcome {
+  return result.status === "error" ? { kind: "failure", error: result.error } : { kind: "success", checks: result.data };
+}
+
+export function allChecksPassed(checks: readonly CheckResult[]): boolean {
+  return checks.every((check) => check.passed);
 }
 
 /** The `refresh_token` string from a JSON token response body, or null when there is none. */
