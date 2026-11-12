@@ -13,6 +13,7 @@
 - Show metadata fetch errors on the client config form and add a Pull Now button for authorization server metadata [PR](https://github.com/ldaIas/oauth-diag-tool/pull/20)
 - Serve RFC 8414 authorization server metadata at `/.well-known/oauth-authorization-server` and build the metadata URL per RFC 8414 §3 [PR](https://github.com/ldaIas/oauth-diag-tool/pull/21)
 - Add feature-pr skill documenting the draft PR -> changelog flow [PR](https://github.com/ldaIas/oauth-diag-tool/pull/22)
+- Add release skill covering the version bump, tag, Release workflow, and publishing the draft release [PR](https://github.com/ldaIas/oauth-diag-tool/pull/23)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)
