@@ -37,7 +37,10 @@ use crate::mcp;
 pub struct ServerState {
     pub db: Arc<Mutex<Connection>>,
     pub server_id: i64,
+    /// The server's public URL when one is set, else its loopback URL. Every advertised URL,
+    /// the token `iss`, and the expected audiences derive from it.
     pub issuer_url: String,
+    /// Advertised as `token_endpoint`
     pub token_url: String,
     /// Maps auth codes to their metadata for the authorization_code grant
     pub auth_codes: Arc<Mutex<HashMap<String, AuthCodeEntry>>>,
@@ -2897,6 +2900,115 @@ mod tests {
             resource_of(&on, "/.well-known/oauth-protected-resource/resource").await,
             Some(format!("{}/resource", on.state.issuer_url))
         );
+    }
+
+    const PUBLIC_URL: &str = "https://tunnel.example";
+
+    /// Starts a server that advertises `PUBLIC_URL`, set up the way `auth_server::start` does.
+    async fn start_public(configure: impl FnOnce(&mut ServerState)) -> TestServer {
+        start(|s| {
+            s.issuer_url = auth_server::issuer_url(0, PUBLIC_URL);
+            s.token_url = auth_server::advertised_token_url(&s.token_url, PUBLIC_URL);
+            configure(s);
+        })
+        .await
+    }
+
+    async fn get_json(ts: &TestServer, path: &str) -> serde_json::Value {
+        ts.http.get(format!("{}{}", ts.base, path)).send().await.unwrap().json().await.unwrap()
+    }
+
+    async fn challenge_metadata_url(response: reqwest::Response) -> Option<String> {
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let values = vec![response.headers()[axum::http::header::WWW_AUTHENTICATE].to_str().unwrap().to_string()];
+        crate::discovery::bearer_param(&values, "resource_metadata")
+    }
+
+    /// Checks every URL the server advertises against `issuer`, the one it was started with.
+    async fn assert_advertises(ts: &TestServer, issuer: &str) {
+        let metadata = get_json(ts, "/.well-known/oauth-authorization-server").await;
+        assert_eq!(metadata["issuer"], issuer);
+        assert_eq!(metadata["authorization_endpoint"], format!("{issuer}/authorize"));
+        assert_eq!(metadata["token_endpoint"], format!("{issuer}/token"));
+        assert_eq!(metadata["registration_endpoint"], format!("{issuer}/register"));
+
+        for (path, resource) in [
+            ("/.well-known/oauth-protected-resource/resource", "/resource"),
+            ("/.well-known/oauth-protected-resource/mcp", "/mcp"),
+            ("/.well-known/oauth-protected-resource", "/mcp"),
+        ] {
+            let prm = get_json(ts, path).await;
+            assert_eq!(prm["resource"], format!("{issuer}{resource}"), "{path}");
+            assert_eq!(prm["authorization_servers"], serde_json::json!([issuer]), "{path}");
+        }
+
+        let resource = ts.http.get(format!("{}/resource", ts.base)).send().await.unwrap();
+        assert_eq!(
+            challenge_metadata_url(resource).await,
+            Some(format!("{issuer}/.well-known/oauth-protected-resource/resource"))
+        );
+        let mcp = mcp_call(ts, None, &[], &rpc("ping", serde_json::json!({}))).await;
+        assert_eq!(challenge_metadata_url(mcp).await, Some(format!("{issuer}/.well-known/oauth-protected-resource/mcp")));
+    }
+
+    #[tokio::test]
+    async fn the_loopback_issuer_is_advertised_without_a_public_url() {
+        let ts = start(|s| s.mcp_enabled = true).await;
+        assert_eq!(ts.state.issuer_url, ts.base);
+        assert_advertises(&ts, &ts.base).await;
+    }
+
+    #[tokio::test]
+    async fn a_public_url_is_advertised_everywhere() {
+        let ts = start_public(|s| s.mcp_enabled = true).await;
+        assert_advertises(&ts, PUBLIC_URL).await;
+    }
+
+    /// Issues a client_credentials token for `resource` through `/token` and returns it with its claims.
+    async fn issue_token(ts: &TestServer, resource: &str) -> (String, JwtClaims) {
+        let (_, registered) = ts.register(&serde_json::json!({ "redirect_uris": [REDIRECT] })).await;
+        let credentials = (registered["client_id"].as_str().unwrap(), registered["client_secret"].as_str().unwrap());
+        let (status, body) = ts
+            .token_with(&[("grant_type", "client_credentials"), ("resource", resource)], Some(credentials))
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let token = body["access_token"].as_str().unwrap().to_string();
+        let mut validation = jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256);
+        validation.validate_aud = false;
+        let claims = jsonwebtoken::decode::<JwtClaims>(&token, &jsonwebtoken::DecodingKey::from_secret(&ts.state.signing_key), &validation)
+            .unwrap()
+            .claims;
+        (token, claims)
+    }
+
+    #[tokio::test]
+    async fn tokens_carry_the_issuer_in_use_and_need_its_audience() {
+        for public in [false, true] {
+            let ts = if public { start_public(|s| s.mcp_enabled = true).await } else { start(|s| s.mcp_enabled = true).await };
+            let issuer = if public { PUBLIC_URL.to_string() } else { ts.base.clone() };
+            let ping = rpc("ping", serde_json::json!({}));
+
+            let (token, claims) = issue_token(&ts, &format!("{issuer}/mcp")).await;
+            assert_eq!(claims.iss, issuer);
+            assert_eq!(claims.aud.as_deref(), Some(format!("{issuer}/mcp").as_str()));
+            // Server-to-server callers send no Origin header, so the loopback Origin check passes.
+            assert_eq!(mcp_call(&ts, Some(&token), &[], &ping).await.status(), StatusCode::OK, "public={public}");
+
+            let (token, _) = issue_token(&ts, &format!("{issuer}/resource")).await;
+            let response = ts.http.get(format!("{}/resource", ts.base)).bearer_auth(&token).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "public={public}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_public_issuer_rejects_tokens_for_the_loopback_audience() {
+        let ts = start_public(|s| s.mcp_enabled = true).await;
+        let (token, _) = issue_token(&ts, &format!("{}/mcp", ts.base)).await;
+        let response = mcp_call(&ts, Some(&token), &[], &rpc("ping", serde_json::json!({}))).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        let description = body["error_description"].as_str().unwrap();
+        assert!(description.contains(&format!("\"{PUBLIC_URL}/mcp\"")), "{description}");
     }
 }
 

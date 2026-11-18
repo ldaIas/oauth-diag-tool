@@ -232,6 +232,7 @@ export type ServerConfig = {
 	tokenUrl: string,
 	/**  Port derived from auth_server_url; 0 when the URL cannot be parsed */
 	port: number,
+	/**  The issuer the saved settings advertise: `public_url` when set, else the loopback URL */
 	issuerUrl: string,
 	running: boolean,
 	/**  Running with settings that differ from the saved ones, which apply at the next start */
@@ -253,6 +254,8 @@ export type ServerConfig = {
 	cimdAllowHttp: boolean,
 	/**  Serve the `/mcp` endpoint and its protected resource metadata */
 	mcpEnabled: boolean,
+	/**  Origin clients reach the server through (a tunnel or proxy); empty when not set */
+	publicUrl: string,
 };
 
 export type ServerMetadataResponse = {
@@ -288,6 +291,8 @@ export type ServerSettingsInput = {
 	cimdAllowHttp: boolean,
 	/**  Serve the `/mcp` endpoint and its protected resource metadata */
 	mcpEnabled: boolean,
+	/**  An http(s) origin that replaces `http://localhost:<port>` as the issuer; empty when not set */
+	publicUrl: string,
 };
 
 export type ServerUser = {

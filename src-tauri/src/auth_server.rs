@@ -78,6 +78,7 @@ pub struct ServerConfig {
     pub token_url: String,
     /// Port derived from auth_server_url; 0 when the URL cannot be parsed
     pub port: u16,
+    /// The issuer the saved settings advertise: `public_url` when set, else the loopback URL
     pub issuer_url: String,
     pub running: bool,
     /// Running with settings that differ from the saved ones, which apply at the next start
@@ -99,6 +100,8 @@ pub struct ServerConfig {
     pub cimd_allow_http: bool,
     /// Serve the `/mcp` endpoint and its protected resource metadata
     pub mcp_enabled: bool,
+    /// Origin clients reach the server through (a tunnel or proxy); empty when not set
+    pub public_url: String,
 }
 
 impl ServerConfig {
@@ -112,6 +115,7 @@ impl ServerConfig {
             dcr_enabled: self.dcr_enabled,
             cimd_allow_http: self.cimd_allow_http,
             mcp_enabled: self.mcp_enabled,
+            public_url: self.public_url.clone(),
         }
     }
 }
@@ -129,6 +133,8 @@ pub struct ServerSettingsInput {
     pub cimd_allow_http: bool,
     /// Serve the `/mcp` endpoint and its protected resource metadata
     pub mcp_enabled: bool,
+    /// An http(s) origin that replaces `http://localhost:<port>` as the issuer; empty when not set
+    pub public_url: String,
 }
 
 struct RunningServer {
@@ -194,7 +200,7 @@ pub fn create(conn: &Connection, config_name: &str, auth_server_url: &str, token
 pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<ServerConfig>, String> {
     log::info!("get_server_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, config_name, auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled FROM server_configs")
+        .prepare("SELECT id, config_name, auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled, public_url FROM server_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -203,13 +209,14 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
         .query_map([], |row| {
             let auth_server_url: String = row.get(2)?;
             let port = extract_port(&auth_server_url).unwrap_or(0);
+            let public_url: String = row.get(12)?;
             Ok(ServerConfig {
                 id: row.get(0)?,
                 config_name: row.get(1)?,
                 auth_server_url,
                 token_url: row.get(3)?,
                 port,
-                issuer_url: format!("http://localhost:{}", port),
+                issuer_url: issuer_url(port, &public_url),
                 running: false,
                 restart_required: false,
                 mcp_active: false,
@@ -223,6 +230,7 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
                 dcr_enabled: row.get::<_, i64>(9)? != 0,
                 cimd_allow_http: row.get::<_, i64>(10)? != 0,
                 mcp_enabled: row.get::<_, i64>(11)? != 0,
+                public_url,
             })
         })
         .map_err(|e| e.to_string())?
@@ -512,13 +520,53 @@ fn validate_redirect_override(value: &str) -> Result<(), String> {
     }
 }
 
+/// The public URL as stored: empty, or an http(s) origin with no trailing slash. A path
+/// is rejected because RFC 8414 and RFC 9728 insert the well-known segment between the host
+/// and the path, which a proxy forwarding a path prefix to this server cannot serve.
+fn normalize_public_url(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    let invalid = || {
+        "Public URL must be an http(s) origin such as https://example.ngrok.app, with no path, query, or fragment".to_string()
+    };
+    let url = reqwest::Url::parse(value).map_err(|_| invalid())?;
+    let origin = url.origin().ascii_serialization();
+    // Anything beyond the origin (credentials, a path, `?`, `#`) makes the serialization longer.
+    if !matches!(url.scheme(), "http" | "https") || url.as_str() != format!("{}/", origin) {
+        return Err(invalid());
+    }
+    Ok(origin)
+}
+
+/// The issuer a server advertises and puts in its tokens.
+pub(crate) fn issuer_url(port: u16, public_url: &str) -> String {
+    if public_url.is_empty() {
+        format!("http://localhost:{}", port)
+    } else {
+        public_url.to_string()
+    }
+}
+
+/// The token endpoint a server advertises. With a public URL, clients must reach it through
+/// that origin too, so the saved loopback token URL no longer applies.
+pub(crate) fn advertised_token_url(token_url: &str, public_url: &str) -> String {
+    if public_url.is_empty() {
+        token_url.to_string()
+    } else {
+        format!("{}/token", public_url)
+    }
+}
+
 pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInput) -> Result<(), String> {
     let redirect_url_override = settings.redirect_url_override.trim();
     validate_redirect_override(redirect_url_override)?;
+    let public_url = normalize_public_url(&settings.public_url)?;
     validate_expiry("Access token expiry", settings.access_token_expiry)?;
     validate_expiry("Refresh token expiry", settings.refresh_token_expiry)?;
     log::info!(
-        "update_server_settings: id={}, redirect_override={}, access_expiry={}, refresh_expiry={}, user_based={}, cimd={}, dcr={}, cimd_allow_http={}, mcp={}",
+        "update_server_settings: id={}, redirect_override={}, access_expiry={}, refresh_expiry={}, user_based={}, cimd={}, dcr={}, cimd_allow_http={}, mcp={}, public_url={}",
         id,
         redirect_url_override,
         settings.access_token_expiry,
@@ -527,11 +575,12 @@ pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInpu
         settings.cimd_enabled,
         settings.dcr_enabled,
         settings.cimd_allow_http,
-        settings.mcp_enabled
+        settings.mcp_enabled,
+        public_url
     );
     conn.execute(
         "UPDATE server_configs SET redirect_url_override = ?1, access_token_expiry = ?2, refresh_token_expiry = ?3, user_based = ?4,
-         cimd_enabled = ?5, dcr_enabled = ?6, cimd_allow_http = ?7, mcp_enabled = ?8 WHERE id = ?9",
+         cimd_enabled = ?5, dcr_enabled = ?6, cimd_allow_http = ?7, mcp_enabled = ?8, public_url = ?9 WHERE id = ?10",
         rusqlite::params![
             redirect_url_override,
             settings.access_token_expiry,
@@ -541,6 +590,7 @@ pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInpu
             settings.dcr_enabled as i64,
             settings.cimd_allow_http as i64,
             settings.mcp_enabled as i64,
+            public_url,
             id
         ],
     )
@@ -559,10 +609,10 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         return Err("Server is already running".to_string());
     }
 
-    let (auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled) = {
+    let (auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled, public_url) = {
         let conn = db.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled FROM server_configs WHERE id = ?1")
+            .prepare("SELECT auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled, public_url FROM server_configs WHERE id = ?1")
             .map_err(|e| e.to_string())?;
         stmt.query_row(rusqlite::params![id], |row| {
             Ok((
@@ -576,13 +626,13 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
                 row.get::<_, i64>(7)? != 0,
                 row.get::<_, i64>(8)? != 0,
                 row.get::<_, i64>(9)? != 0,
+                row.get::<_, String>(10)?,
             ))
         })
         .map_err(|e| e.to_string())?
     };
 
     let port = extract_port(&auth_server_url)?;
-    let issuer_url = format!("http://localhost:{}", port);
     let applied = ServerSettingsInput {
         redirect_url_override: redirect_url_override.clone(),
         access_token_expiry,
@@ -592,6 +642,7 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         dcr_enabled,
         cimd_allow_http,
         mcp_enabled,
+        public_url: public_url.clone(),
     };
 
     // Generate a random signing key for JWT tokens
@@ -601,8 +652,8 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
     let server_state = oauth_server::ServerState {
         db: Arc::clone(db),
         server_id: id,
-        issuer_url,
-        token_url,
+        issuer_url: issuer_url(port, &public_url),
+        token_url: advertised_token_url(&token_url, &public_url),
         auth_codes: Arc::new(Mutex::new(HashMap::new())),
         refresh_tokens: Arc::new(Mutex::new(HashMap::new())),
         redirect_url_override: if redirect_url_override.is_empty() { None } else { Some(redirect_url_override) },
@@ -764,6 +815,7 @@ mod tests {
             dcr_enabled: true,
             cimd_allow_http: false,
             mcp_enabled: false,
+            public_url: String::new(),
         }
     }
 
@@ -809,6 +861,85 @@ mod tests {
         update_settings(&conn, 1, &ServerSettingsInput { mcp_enabled: true, ..stored }).unwrap();
         let server = get_all(&conn, &running).unwrap().remove(0);
         assert!(server.restart_required && server.mcp_enabled && !server.mcp_active);
+    }
+
+    #[test]
+    fn running_server_reports_a_public_url_it_has_not_applied() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let mut running = test_runtime();
+        let stored = get_all(&conn, &running).unwrap().remove(0).settings();
+        insert_running(&mut running, 1, 9500, stored.clone());
+
+        let public = ServerSettingsInput { public_url: "https://tunnel.example".to_string(), ..stored.clone() };
+        update_settings(&conn, 1, &public).unwrap();
+        assert!(get_all(&conn, &running).unwrap().remove(0).restart_required);
+
+        update_settings(&conn, 1, &stored).unwrap();
+        assert!(!get_all(&conn, &running).unwrap().remove(0).restart_required);
+    }
+
+    #[test]
+    fn public_url_accepts_http_origins_and_stores_them_canonically() {
+        for (input, stored) in [
+            ("", ""),
+            ("   ", ""),
+            ("https://unused-kazuko-flukier.ngrok-free.dev", "https://unused-kazuko-flukier.ngrok-free.dev"),
+            (" https://tunnel.example/ ", "https://tunnel.example"),
+            ("http://tunnel.example:8080", "http://tunnel.example:8080"),
+            ("HTTPS://Tunnel.Example:443/", "https://tunnel.example"),
+            ("http://[::1]:9500", "http://[::1]:9500"),
+        ] {
+            assert_eq!(normalize_public_url(input).as_deref(), Ok(stored), "{input}");
+        }
+    }
+
+    #[test]
+    fn public_url_rejects_anything_but_an_http_origin() {
+        for input in [
+            "tunnel.example",
+            "not a url",
+            "ftp://tunnel.example",
+            "https://tunnel.example/oauth",
+            "https://tunnel.example//",
+            "https://tunnel.example?x=1",
+            "https://tunnel.example/?",
+            "https://tunnel.example#top",
+            "https://user:pw@tunnel.example",
+        ] {
+            assert!(normalize_public_url(input).is_err(), "{input}");
+        }
+    }
+
+    #[test]
+    fn public_url_replaces_the_loopback_issuer_and_token_endpoint() {
+        assert_eq!(issuer_url(9500, ""), "http://localhost:9500");
+        assert_eq!(advertised_token_url("http://localhost:9500/token", ""), "http://localhost:9500/token");
+        assert_eq!(issuer_url(9500, "https://tunnel.example"), "https://tunnel.example");
+        assert_eq!(advertised_token_url("http://localhost:9500/token", "https://tunnel.example"), "https://tunnel.example/token");
+    }
+
+    #[test]
+    fn update_settings_validates_and_stores_the_public_url() {
+        let conn = db::open_test_connection();
+        let running = test_runtime();
+        let id = server_with_id(&conn, &running);
+
+        let with_url = |url: &str| ServerSettingsInput { public_url: url.to_string(), ..settings("", 3600, 86400, false) };
+        let err = update_settings(&conn, id, &with_url("https://tunnel.example/path")).unwrap_err();
+        assert!(err.contains("Public URL"), "{err}");
+        assert_eq!(get_all(&conn, &running).unwrap()[0].public_url, "");
+
+        update_settings(&conn, id, &with_url(" https://Tunnel.example/ ")).unwrap();
+        let server = &get_all(&conn, &running).unwrap()[0];
+        assert_eq!(server.public_url, "https://tunnel.example");
+        assert_eq!(server.issuer_url, "https://tunnel.example");
+        assert_eq!(server.token_url, "http://localhost:9500/token");
+
+        update_settings(&conn, id, &with_url("")).unwrap();
+        let server = &get_all(&conn, &running).unwrap()[0];
+        assert_eq!(server.public_url, "");
+        assert_eq!(server.issuer_url, "http://localhost:9500");
     }
 
     #[test]
@@ -892,6 +1023,7 @@ mod tests {
         assert!(config.dcr_enabled);
         assert!(config.cimd_allow_http);
         assert!(!config.mcp_enabled);
+        assert_eq!(config.public_url, "");
     }
 
     #[test]

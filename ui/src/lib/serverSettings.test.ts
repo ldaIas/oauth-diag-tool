@@ -3,7 +3,15 @@
 
 import { describe, expect, test } from "vitest";
 import type { ServerConfig } from "../bindings";
-import { parseIntOr, settingsChanged, settingsEditFor, toServerSettings, validateSettings, type SettingsEdit } from "./serverSettings";
+import {
+  normalizePublicUrl,
+  parseIntOr,
+  settingsChanged,
+  settingsEditFor,
+  toServerSettings,
+  validateSettings,
+  type SettingsEdit,
+} from "./serverSettings";
 
 describe("parseIntOr", () => {
   test("parses whole integers, including signed ones", () => {
@@ -24,6 +32,7 @@ const edit: SettingsEdit = {
   dcrEnabled: false,
   cimdAllowHttp: true,
   mcpEnabled: true,
+  publicUrl: "",
 };
 
 describe("toServerSettings", () => {
@@ -37,6 +46,7 @@ describe("toServerSettings", () => {
       dcrEnabled: false,
       cimdAllowHttp: true,
       mcpEnabled: true,
+      publicUrl: "",
     });
   });
 
@@ -50,6 +60,7 @@ describe("toServerSettings", () => {
       dcrEnabled: false,
       cimdAllowHttp: true,
       mcpEnabled: true,
+      publicUrl: "",
     });
   });
 });
@@ -65,6 +76,7 @@ describe("settingsEditFor", () => {
       dcrEnabled: true,
       cimdAllowHttp: true,
       mcpEnabled: true,
+      publicUrl: "https://tunnel.example",
     } as ServerConfig;
     expect(settingsEditFor(server)).toEqual({
       redirectUrlOverride: "http://x/cb",
@@ -75,7 +87,33 @@ describe("settingsEditFor", () => {
       dcrEnabled: true,
       cimdAllowHttp: true,
       mcpEnabled: true,
+      publicUrl: "https://tunnel.example",
     });
+  });
+});
+
+describe("normalizePublicUrl", () => {
+  test("returns http(s) origins in the backend's canonical form", () => {
+    expect(normalizePublicUrl("  ")).toBe("");
+    expect(normalizePublicUrl("https://unused-kazuko-flukier.ngrok-free.dev")).toBe("https://unused-kazuko-flukier.ngrok-free.dev");
+    expect(normalizePublicUrl(" https://tunnel.example/ ")).toBe("https://tunnel.example");
+    expect(normalizePublicUrl("HTTPS://Tunnel.Example:443/")).toBe("https://tunnel.example");
+    expect(normalizePublicUrl("http://tunnel.example:8080")).toBe("http://tunnel.example:8080");
+  });
+
+  test("rejects paths, queries, fragments, credentials and other schemes", () => {
+    for (const raw of [
+      "tunnel.example",
+      "ftp://tunnel.example",
+      "https://tunnel.example/oauth",
+      "https://tunnel.example//",
+      "https://tunnel.example?x=1",
+      "https://tunnel.example/?",
+      "https://tunnel.example#top",
+      "https://user:pw@tunnel.example",
+    ]) {
+      expect(normalizePublicUrl(raw), raw).toBeNull();
+    }
   });
 });
 
@@ -95,6 +133,11 @@ describe("validateSettings", () => {
   test("rejects a redirect override that is not an absolute http(s) URL", () => {
     expect(validateSettings({ ...edit, redirectUrlOverride: "not a url" }).redirectUrlOverride).toBeDefined();
   });
+
+  test("accepts an empty or origin-only public URL and rejects one with a path", () => {
+    expect(validateSettings({ ...edit, publicUrl: "https://tunnel.example/" })).toEqual({});
+    expect(validateSettings({ ...edit, publicUrl: "https://tunnel.example/oauth" }).publicUrl).toBeDefined();
+  });
 });
 
 describe("settingsChanged", () => {
@@ -108,5 +151,12 @@ describe("settingsChanged", () => {
   test("is true for any real difference, including an emptied expiry", () => {
     expect(settingsChanged({ ...edit, mcpEnabled: false }, server)).toBe(true);
     expect(settingsChanged({ ...edit, accessTokenExpiry: "" }, server)).toBe(true);
+    expect(settingsChanged({ ...edit, publicUrl: "https://tunnel.example" }, server)).toBe(true);
+  });
+
+  test("compares public URLs in their stored form", () => {
+    const saved = { ...server, publicUrl: "https://tunnel.example" } as ServerConfig;
+    expect(settingsChanged({ ...edit, publicUrl: " HTTPS://tunnel.example/ " }, saved)).toBe(false);
+    expect(toServerSettings({ ...edit, publicUrl: " HTTPS://tunnel.example/ " }).publicUrl).toBe("https://tunnel.example");
   });
 });

@@ -45,6 +45,7 @@ OAuth Servers let you spin up local OAuth authorization servers for testing.
 - Client authentication supports both `client_secret_post` and `client_secret_basic`.
 - Access tokens are JWTs signed with a per-server HMAC-SHA256 key. Refresh tokens are issued when the requested scope includes `offline_access`.
 - Token expiries and a redirect URL override are configurable per server in its settings.
+- A **Public URL** setting exposes a server through a tunnel or reverse proxy (for example ngrok). Set it to the https origin remote clients use, such as `https://example.ngrok-free.app`, and restart the server: the issuer, every URL in the server's metadata and protected resource metadata, the `WWW-Authenticate` challenges, and the token `iss` and expected audiences then use it. It takes an origin only, with no path. The server still listens on 127.0.0.1, so point the tunnel at `localhost:<port>`. Tokens issued under the previous issuer stop validating.
 - All running servers are automatically stopped when the app closes.
 - A server cannot be deleted while it is running.
 

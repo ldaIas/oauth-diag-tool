@@ -1,8 +1,9 @@
 {
   "server": {
     "name": "A label for this server in the app. It is not sent in any request.",
-    "port": "The local port the server listens on (127.0.0.1 only). The issuer and endpoint URLs are built from it.",
-    "issuerUrl": "The server's base URL. Clients use it as the issuer, and its metadata is served at /.well-known/oauth-authorization-server.",
+    "port": "The local port the server listens on (127.0.0.1 only). The issuer and endpoint URLs are built from it unless a public URL is set.",
+    "issuerUrl": "The server's base URL: the public URL when one is set, else http://localhost:<port>. Clients use it as the issuer, and its metadata is served at /.well-known/oauth-authorization-server.",
+    "localUrl": "Where the server listens on this machine. The public URL forwards here, and it still answers requests sent here directly.",
     "authorizationUrl": "Where clients send the browser for the authorization code flow (GET /authorize).",
     "tokenUrl": "Where clients exchange credentials, codes, or refresh tokens for tokens (POST /token).",
     "clients": "Client ID and secret pairs registered with this server, added here or through dynamic client registration. Import copies one into a new client configuration.",
@@ -18,6 +19,7 @@
     "resource": "A protected endpoint for testing tokens. Call it with an access token in an Authorization: Bearer header."
   },
   "serverSettings": {
+    "publicUrl": "For exposing this server through a tunnel or reverse proxy, such as ngrok: the https origin remote clients reach it at. It replaces http://localhost:<port> as the issuer, so the metadata endpoints, protected resource metadata, WWW-Authenticate challenges, token iss, and the audiences the server accepts all use it. Origin only, with no path. The server still listens on 127.0.0.1 only. Changing it changes the issuer, so tokens issued before the change stop validating.",
     "redirectUrlOverride": "When set, the server redirects here after authorization instead of to the redirect_uri the client sent. Must be an absolute http(s) URL.",
     "accessTokenExpiry": "Lifetime of issued access tokens, in seconds (0 or more). Sets the JWT exp claim and expires_in in the token response.",
     "refreshTokenExpiry": "Lifetime of issued refresh tokens, in seconds (0 or more). Refresh tokens are only issued when the scope includes offline_access.",

@@ -14,6 +14,7 @@ import { matchesSearch } from "../lib/search";
 import { clientIdHost, clientSearchTerms, hasSecret, registrationLabel } from "../lib/serverClients";
 import type { ClientMetadataFetch } from "../lib/serverEvents";
 import { settingsChanged } from "../lib/serverSettings";
+import { serverUrls } from "../lib/serverUrls";
 import { canSaveUserEdit, defaultUserData, userEditChanged, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
 import { HelpTip } from "./HelpTip";
@@ -79,13 +80,14 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
   const clientsExpanded = ui.expandedClients.has(server.id);
   const settingsExpanded = ui.expandedSettings.has(server.id);
   const settingsEdit = ui.settingsEdits[server.id];
+  const urls = serverUrls(server);
 
   function importClient(client: OAuthClient) {
     onImportClient({
       name: `${server.configName} - ${client.clientId}`,
-      issuerUrl: server.issuerUrl,
-      authorizationUrl: server.authServerUrl,
-      tokenUrl: server.tokenUrl,
+      issuerUrl: urls.issuer,
+      authorizationUrl: urls.authorization,
+      tokenUrl: urls.token,
       clientId: client.clientId,
       clientSecret: client.clientSecret,
     });
@@ -162,9 +164,10 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
         </div>
       </div>
       <div className="server-card-details">
-        <Detail label="Issuer" value={server.issuerUrl} help="server.issuerUrl" />
-        <Detail label="Authorization" value={server.authServerUrl} help="server.authorizationUrl" />
-        <Detail label="Token" value={server.tokenUrl} help="server.tokenUrl" />
+        <Detail label="Issuer" value={urls.issuer} help="server.issuerUrl" />
+        {urls.local !== null && <Detail label="Local URL" value={urls.local} help="server.localUrl" />}
+        <Detail label="Authorization" value={urls.authorization} help="server.authorizationUrl" />
+        <Detail label="Token" value={urls.token} help="server.tokenUrl" />
       </div>
       <div className="settings-section">
         <div className="settings-section-header">

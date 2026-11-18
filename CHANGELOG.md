@@ -1,6 +1,7 @@
 # Changelog
 
 ## [Unreleased]
+- Add a per-server Public URL that replaces the loopback issuer in metadata, challenges and tokens, so a server can be used through a tunnel [PR](https://github.com/ldaIas/oauth-diag-tool/pull/31)
 
 ## [0.1.1] - 2026-11-17
 - Fix the release build running from the wrong frontend directory. The v0.1.0 tag produced no release, so this is the first release with the 0.1.0 changes [PR](https://github.com/ldaIas/oauth-diag-tool/pull/30)

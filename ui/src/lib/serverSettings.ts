@@ -14,6 +14,7 @@ export interface SettingsEdit {
   dcrEnabled: boolean;
   cimdAllowHttp: boolean;
   mcpEnabled: boolean;
+  publicUrl: string;
 }
 
 export type ServerSettings = ServerSettingsInput;
@@ -24,6 +25,7 @@ const DEFAULT_REFRESH_TOKEN_EXPIRY = 86400;
 const MAX_TOKEN_EXPIRY = 315_360_000;
 
 export interface SettingsErrors {
+  publicUrl?: string;
   redirectUrlOverride?: string;
   accessTokenExpiry?: string;
   refreshTokenExpiry?: string;
@@ -45,8 +47,30 @@ function expiryError(raw: string): string | undefined {
   return seconds < 0 || seconds > MAX_TOKEN_EXPIRY ? `Enter a value from 0 to ${MAX_TOKEN_EXPIRY}` : undefined;
 }
 
+/**
+ * The public URL as the backend stores it: "" or an http(s) origin without a trailing slash;
+ * null when the input has a path, query, fragment or credentials, or is not an http(s) URL.
+ */
+export function normalizePublicUrl(raw: string): string | null {
+  const value = raw.trim();
+  if (value === "") {
+    return "";
+  }
+  try {
+    const url = new URL(value);
+    const isHttp = url.protocol === "http:" || url.protocol === "https:";
+    // Anything beyond the origin makes the serialized URL longer than `${origin}/`.
+    return isHttp && url.href === `${url.origin}/` ? url.origin : null;
+  } catch {
+    return null;
+  }
+}
+
 export function validateSettings(edit: SettingsEdit): SettingsErrors {
   const errors: SettingsErrors = {};
+  if (normalizePublicUrl(edit.publicUrl) === null) {
+    errors.publicUrl = "Enter an http(s) origin with no path, such as https://example.ngrok.app, or leave this empty";
+  }
   if (edit.redirectUrlOverride.trim() !== "" && !isHttpUrl(edit.redirectUrlOverride)) {
     errors.redirectUrlOverride = "Enter an absolute http(s) URL, or leave this empty";
   }
@@ -76,7 +100,8 @@ export function settingsChanged(edit: SettingsEdit, server: ServerConfig): boole
     edit.cimdEnabled !== saved.cimdEnabled ||
     edit.dcrEnabled !== saved.dcrEnabled ||
     edit.cimdAllowHttp !== saved.cimdAllowHttp ||
-    edit.mcpEnabled !== saved.mcpEnabled
+    edit.mcpEnabled !== saved.mcpEnabled ||
+    (normalizePublicUrl(edit.publicUrl) ?? edit.publicUrl.trim()) !== saved.publicUrl
   );
 }
 
@@ -90,6 +115,7 @@ export function settingsEditFor(server: ServerConfig): SettingsEdit {
     dcrEnabled: server.dcrEnabled,
     cimdAllowHttp: server.cimdAllowHttp,
     mcpEnabled: server.mcpEnabled,
+    publicUrl: server.publicUrl,
   };
 }
 
@@ -103,5 +129,6 @@ export function toServerSettings(edit: SettingsEdit): ServerSettings {
     dcrEnabled: edit.dcrEnabled,
     cimdAllowHttp: edit.cimdAllowHttp,
     mcpEnabled: edit.mcpEnabled,
+    publicUrl: normalizePublicUrl(edit.publicUrl) ?? edit.publicUrl.trim(),
   };
 }

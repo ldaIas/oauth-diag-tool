@@ -22,7 +22,8 @@ const SCHEMA: &str = "
         cimd_enabled INTEGER NOT NULL DEFAULT 1,
         dcr_enabled INTEGER NOT NULL DEFAULT 1,
         cimd_allow_http INTEGER NOT NULL DEFAULT 0,
-        mcp_enabled INTEGER NOT NULL DEFAULT 0
+        mcp_enabled INTEGER NOT NULL DEFAULT 0,
+        public_url TEXT NOT NULL DEFAULT ''
     );
 
     CREATE TABLE IF NOT EXISTS auth_server_clients (
@@ -113,6 +114,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (16, "ALTER TABLE server_configs ADD COLUMN mcp_enabled INTEGER NOT NULL DEFAULT 0;"),
     (17, "ALTER TABLE oauth_client_configs ADD COLUMN mcp_url TEXT NOT NULL DEFAULT '';
           ALTER TABLE oauth_client_configs ADD COLUMN token_for_mcp INTEGER NOT NULL DEFAULT 0;"),
+    (18, "ALTER TABLE server_configs ADD COLUMN public_url TEXT NOT NULL DEFAULT '';"),
 ];
 
 const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -278,7 +280,7 @@ mod tests {
     #[test]
     fn latest_version_reflects_last_migration() {
         // Pins the intentional version-2 gap: last entry decides, not array length.
-        assert_eq!(LATEST_VERSION, 17);
+        assert_eq!(LATEST_VERSION, 18);
     }
 
     #[test]
@@ -547,6 +549,40 @@ mod tests {
             .query_row("SELECT mcp_enabled FROM server_configs WHERE config_name = 'old'", [], |row| row.get(0))
             .unwrap();
         assert_eq!(mcp_enabled, 0);
+    }
+
+    #[test]
+    fn upgrade_from_version_seventeen_adds_the_public_url() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, config_name TEXT NOT NULL);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 17);
+             INSERT INTO server_configs (config_name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let public_url: String = conn
+            .query_row("SELECT public_url FROM server_configs WHERE config_name = 'old'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(public_url, "");
+    }
+
+    #[test]
+    fn a_database_from_a_newer_build_is_opened_unchanged() {
+        // An older build must keep working after a newer one migrated the file. Its
+        // queries name their columns, so columns it does not know about are ignored.
+        let conn = open_test_connection();
+        conn.execute_batch("UPDATE schema_version SET version = 99 WHERE id = 1").unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), 99);
     }
 
     #[test]
