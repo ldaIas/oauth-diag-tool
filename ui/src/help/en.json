@@ -19,13 +19,13 @@
   },
   "serverSettings": {
     "redirectUrlOverride": "When set, the server redirects here after authorization instead of to the redirect_uri the client sent. Must be an absolute http(s) URL.",
-    "accessTokenExpiry": "Lifetime of issued access tokens, in seconds. Sets the JWT exp claim and expires_in in the token response.",
-    "refreshTokenExpiry": "Lifetime of issued refresh tokens, in seconds. Refresh tokens are only issued when the scope includes offline_access.",
+    "accessTokenExpiry": "Lifetime of issued access tokens, in seconds (0 or more). Sets the JWT exp claim and expires_in in the token response.",
+    "refreshTokenExpiry": "Lifetime of issued refresh tokens, in seconds (0 or more). Refresh tokens are only issued when the scope includes offline_access.",
     "userBased": "When on, /authorize shows a login page instead of a consent page, and issued tokens carry the signed-in username.",
     "cimdEnabled": "Accept a URL as client_id and fetch the client's metadata document from it (Client ID Metadata Documents). The server's metadata then advertises client_id_metadata_document_supported.",
     "dcrEnabled": "Serve POST /register so clients can register themselves (RFC 7591). The server's metadata then advertises a registration_endpoint.",
     "mcpEnabled": "Serve a minimal MCP server at /mcp (Streamable HTTP) protected by this server's tokens, so an MCP client can run the whole OAuth flow against it. Its protected resource metadata is served at /.well-known/oauth-protected-resource/mcp, and the root form then describes /mcp instead of /resource.",
-    "cimdAllowHttp": "Also accept http:// client ID URLs when the host is localhost, 127.0.0.1, or [::1], for testing a client on this machine. The specification requires https."
+    "cimdAllowHttp": "Also accept http:// client ID URLs when the host is localhost, 127.0.0.1, or [::1], for testing a client on this machine. On by default for new servers, so documents this app serves locally work. The specification requires https."
   },
   "serverUser": {
     "username": "The name the user signs in with on the login page. Leading and trailing spaces are removed.",
@@ -61,7 +61,7 @@
     "registrationSupport": "The registration methods the server advertises in its metadata: client_id_metadata_document_supported and registration_endpoint. A method that is not advertised may still work.",
     "tokenAuthMethod": "How the registered client authenticates at the token endpoint. none makes a public client that sends only client_id and relies on PKCE. client_secret_post sends the issued secret in the request body; client_secret_basic sends it in an Authorization: Basic header.",
     "clientIdUrl": "The URL of the client metadata document. The server fetches it to learn the client's name and redirect URIs, so the document's client_id must equal this URL. Servers reject URLs with a fragment, credentials, dot segments, or no path.",
-    "serveClientMetadata": "On by default. The client ID becomes this app's local document URL, http://127.0.0.1:<callback port>/client-metadata/<config id>, filled in when the config is saved. Turn it off to enter the URL of a document you host yourself. While an authorization or token refresh runs, this app serves the generated document at /client-metadata/<config id>, until the token request ends. This only works with authorization servers that can reach 127.0.0.1 and accept http client IDs, such as this app's own server with Allow http client ID URLs on. It never works with remote production servers.",
+    "serveClientMetadata": "On by default. The client ID becomes this app's local document URL, http://127.0.0.1:<callback port>/client-metadata/<config id>, filled in when the config is saved. Turn it off to enter the URL of a document you host yourself. While an authorization or token refresh runs, this app serves the generated document at /client-metadata/<config id>, until the token request ends. This only works with authorization servers that can reach 127.0.0.1 and accept http client IDs, such as this app's own server, where Allow http client ID URLs on localhost is on by default for new servers. It never works with remote production servers.",
     "clientMetadataDocument": "The document to host at the client ID URL. The redirect URI is this app's callback URL and the client is public (token_endpoint_auth_method none), so authorization uses PKCE and no secret is sent.",
     "verifyDocument": "Fetches the client ID URL and applies the rules this app's server uses: no redirects, a size limit, a matching client_id, listed redirect URIs, and no shared secret. It also checks that this app's callback URL is listed. A locally served document is generated instead of fetched.",
     "registerClient": "Sends a registration request to the discovered registration endpoint with this configuration's name, this app's callback URL, the authorization code and refresh token grants, the chosen auth method, and the scopes. On success the client ID, and the secret if one was issued, are filled in here; save to keep them. Pull metadata first to discover the endpoint.",

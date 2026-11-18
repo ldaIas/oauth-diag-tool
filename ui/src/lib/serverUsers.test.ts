@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "vitest";
-import { canSaveUserEdit, defaultUserData, toNewUser, userEditFor, validateAddUser } from "./serverUsers";
+import type { ServerUser } from "../bindings";
+import { canSaveUserEdit, defaultUserData, toNewUser, userEditFor, validateAddUser, userEditChanged } from "./serverUsers";
 
 describe("defaultUserData", () => {
   test("embeds the trimmed username", () => {
@@ -47,5 +48,19 @@ describe("user edits", () => {
   test("cannot save an empty password but can save empty user data", () => {
     expect(canSaveUserEdit({ password: "", userData: "d" })).toBe(false);
     expect(canSaveUserEdit({ password: "p", userData: "" })).toBe(true);
+  });
+});
+
+describe("userEditChanged", () => {
+  const user = { username: "alice", password: "pw", userData: "example data for user alice" } as ServerUser;
+
+  test("treats empty user data as the default text", () => {
+    expect(userEditChanged({ password: "pw", userData: "" }, user)).toBe(false);
+    expect(userEditChanged({ password: "pw", userData: "" }, { ...user, userData: "custom" })).toBe(true);
+  });
+
+  test("notices a changed password or user data", () => {
+    expect(userEditChanged({ password: "new", userData: user.userData }, user)).toBe(true);
+    expect(userEditChanged({ password: "pw", userData: "custom" }, user)).toBe(true);
   });
 });

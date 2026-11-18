@@ -1,7 +1,8 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import { setServerFormPort, type ServerFormModel } from "../lib/serverForm";
+import { useState } from "react";
+import { setServerFormPort, validateServerForm, type ServerFormModel } from "../lib/serverForm";
 import type { HelpKey } from "../lib/help";
 import { FieldLabel, FormInput } from "./shared";
 
@@ -13,6 +14,17 @@ interface ServerFormProps {
 }
 
 export function ServerForm({ model, onChange, onSubmit, onCancel }: ServerFormProps) {
+  const [attempted, setAttempted] = useState(false);
+  const errors = validateServerForm(model);
+
+  function submit() {
+    if (errors.name === undefined) {
+      onSubmit(model);
+    } else {
+      setAttempted(true);
+    }
+  }
+
   return (
     <div className="form-overlay">
       <div className="form-panel">
@@ -22,6 +34,7 @@ export function ServerForm({ model, onChange, onSubmit, onCancel }: ServerFormPr
           value={model.name}
           placeholder="My Auth Server"
           help="server.name"
+          error={attempted ? errors.name : undefined}
           onChange={(name) => onChange({ ...model, name })}
         />
         <FormInput
@@ -38,7 +51,7 @@ export function ServerForm({ model, onChange, onSubmit, onCancel }: ServerFormPr
           <button className="btn-cancel" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn-submit" onClick={() => onSubmit(model)}>
+          <button className="btn-submit" onClick={submit}>
             Create Server
           </button>
         </div>

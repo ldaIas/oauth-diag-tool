@@ -190,6 +190,48 @@ fn stop_server(
 
 #[tauri::command]
 #[specta::specta]
+fn restart_server(
+    app_handle: tauri::AppHandle,
+    db_state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running_state: tauri::State<'_, Mutex<RunningServers>>,
+    id: i64,
+) -> Result<(), String> {
+    let mut running = running_state.lock().map_err(|e| e.to_string())?;
+    auth_server::restart(&db_state, &mut running, id, app_handle)
+}
+
+/// Fails early, with the fix, when a request to this machine cannot succeed. This matters most
+/// for the browser flow, where a failure would otherwise never reach the app.
+async fn check_local_target(
+    db: &Mutex<Connection>,
+    running: &Mutex<RunningServers>,
+    url: &str,
+    metadata_document_client_id: Option<&str>,
+) -> Result<(), String> {
+    let Some(target) = auth_client::loopback_target(url) else {
+        return Ok(());
+    };
+    let refused = auth_client::connection_refused(&target).await;
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    if refused {
+        let name = auth_server::server_name_on_port(&conn, target.port)?;
+        return Err(auth_client::unreachable_message(url, target.port, name.as_deref()));
+    }
+    if let Some(client_id) = metadata_document_client_id {
+        let running = running.lock().map_err(|e| e.to_string())?;
+        if let Some(problem) = auth_server::local_cimd_problem(&conn, &running, target.port, client_id)? {
+            return Err(problem);
+        }
+    }
+    Ok(())
+}
+
+fn metadata_document_client_id(config: &auth_client::ResolvedClientConfig) -> Option<&str> {
+    (config.registration_mode == client_registration::RegistrationMode::Cimd).then_some(config.client_id.as_str())
+}
+
+#[tauri::command]
+#[specta::specta]
 fn get_callback_url() -> String {
     auth_client::callback_url()
 }
@@ -198,6 +240,7 @@ fn get_callback_url() -> String {
 #[specta::specta]
 async fn authorize_client(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running: tauri::State<'_, Mutex<RunningServers>>,
     pending: tauri::State<'_, PendingAuthorizations>,
     id: i64,
 ) -> Result<auth_client::AuthResponse, String> {
@@ -207,6 +250,8 @@ async fn authorize_client(
         let conn = state.lock().map_err(|e| e.to_string())?;
         auth_client::lookup_config(&conn, id)?
     };
+    let first_url = if config.grant_type == "authorization_code" { &config.authorization_url } else { &config.token_url };
+    check_local_target(&state, &running, first_url, metadata_document_client_id(&config)).await?;
 
     let result = match config.grant_type.as_str() {
         "authorization_code" => {
@@ -247,6 +292,7 @@ async fn authorize_client(
 #[specta::specta]
 async fn refresh_token(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running: tauri::State<'_, Mutex<RunningServers>>,
     id: i64,
 ) -> Result<auth_client::AuthResponse, String> {
     log::info!("refresh_token called: id={}", id);
@@ -261,6 +307,7 @@ async fn refresh_token(
         let disabled_refresh = auth_client::lookup_disabled_refresh_params(&conn, id)?;
         (config, refresh_tok, disabled_refresh)
     };
+    check_local_target(&state, &running, &config.token_url, metadata_document_client_id(&config)).await?;
     let resource = auth_client::refresh_resource_param(&config, &disabled_refresh);
 
     let result = auth_client::refresh_token_flow(&config, refresh_tok, resource, disabled_refresh).await;
@@ -301,6 +348,7 @@ async fn fetch_server_metadata(
 #[specta::specta]
 async fn call_resource(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running: tauri::State<'_, Mutex<RunningServers>>,
     id: i64,
     access_token: String,
 ) -> Result<auth_client::AuthResponse, String> {
@@ -309,6 +357,7 @@ async fn call_resource(
         let conn = state.lock().map_err(|e| e.to_string())?;
         auth_client::lookup_config(&conn, id)?.resource_url
     };
+    check_local_target(&state, &running, &resource_url, None).await?;
     auth_client::call_resource(&resource_url, &access_token).await
 }
 
@@ -316,6 +365,7 @@ async fn call_resource(
 #[specta::specta]
 async fn probe_mcp(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    running: tauri::State<'_, Mutex<RunningServers>>,
     id: i64,
     access_token: String,
 ) -> Result<mcp_probe::ProbeReport, String> {
@@ -324,6 +374,7 @@ async fn probe_mcp(
         let conn = state.lock().map_err(|e| e.to_string())?;
         auth_client::lookup_config(&conn, id)?.mcp_url
     };
+    check_local_target(&state, &running, &mcp_url, None).await?;
     mcp_probe::probe(&mcp_url, &access_token).await
 }
 
@@ -389,6 +440,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             delete_user,
             start_server,
             stop_server,
+            restart_server,
             get_callback_url,
             authorize_client,
             refresh_token,

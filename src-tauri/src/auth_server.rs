@@ -14,8 +14,12 @@ use rand::distributions::Alphanumeric;
 use tokio::task::JoinHandle;
 use tokio::sync::oneshot;
 
+use crate::cimd::{self, ClientIdKind};
 use crate::dcr::ClientRegistration;
 use crate::oauth_server;
+
+/// Ten years; keeps `now + expiry` far from overflow and the value exact in JavaScript.
+const MAX_TOKEN_EXPIRY_SECS: i64 = 315_360_000;
 
 /// How a client came to exist on a server.
 #[derive(Serialize, specta::Type, Clone, Copy, PartialEq, Debug)]
@@ -76,6 +80,10 @@ pub struct ServerConfig {
     pub port: u16,
     pub issuer_url: String,
     pub running: bool,
+    /// Running with settings that differ from the saved ones, which apply at the next start
+    pub restart_required: bool,
+    /// Running with the `/mcp` endpoint on; the saved `mcp_enabled` may not be applied yet
+    pub mcp_active: bool,
     pub clients: Vec<OAuthClient>,
     pub redirect_url_override: String,
     pub access_token_expiry: i64,
@@ -93,8 +101,23 @@ pub struct ServerConfig {
     pub mcp_enabled: bool,
 }
 
+impl ServerConfig {
+    fn settings(&self) -> ServerSettingsInput {
+        ServerSettingsInput {
+            redirect_url_override: self.redirect_url_override.clone(),
+            access_token_expiry: self.access_token_expiry,
+            refresh_token_expiry: self.refresh_token_expiry,
+            user_based: self.user_based,
+            cimd_enabled: self.cimd_enabled,
+            dcr_enabled: self.dcr_enabled,
+            cimd_allow_http: self.cimd_allow_http,
+            mcp_enabled: self.mcp_enabled,
+        }
+    }
+}
+
 /// The editable per-server settings, saved together.
-#[derive(Deserialize, specta::Type)]
+#[derive(Deserialize, specta::Type, Clone, PartialEq, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerSettingsInput {
     pub redirect_url_override: String,
@@ -111,6 +134,9 @@ pub struct ServerSettingsInput {
 struct RunningServer {
     handle: JoinHandle<()>,
     shutdown_tx: oneshot::Sender<()>,
+    port: u16,
+    /// The settings this instance started with; saved changes do not reach it.
+    applied: ServerSettingsInput,
 }
 
 pub struct RunningServers {
@@ -143,12 +169,18 @@ impl Drop for RunningServers {
 }
 
 pub fn create(conn: &Connection, config_name: &str, auth_server_url: &str, token_url: &str) -> Result<(), String> {
+    let config_name = config_name.trim();
+    if config_name.is_empty() {
+        return Err("Server name is required".to_string());
+    }
     log::info!(
         "create_server_config: name={}, auth_url={}, token_url={}",
         config_name, auth_server_url, token_url
     );
+    // Loopback http client IDs are on for new servers so this app's locally served client
+    // metadata documents work against them. The server only listens on 127.0.0.1.
     conn.execute(
-        "INSERT INTO server_configs (config_name, auth_server_url, token_url) VALUES (?1, ?2, ?3)",
+        "INSERT INTO server_configs (config_name, auth_server_url, token_url, cimd_allow_http) VALUES (?1, ?2, ?3, 1)",
         rusqlite::params![config_name, auth_server_url, token_url],
     )
     .map_err(|e| {
@@ -179,6 +211,8 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
                 port,
                 issuer_url: format!("http://localhost:{}", port),
                 running: false,
+                restart_required: false,
+                mcp_active: false,
                 clients: Vec::new(),
                 redirect_url_override: row.get(4)?,
                 access_token_expiry: row.get(5)?,
@@ -224,6 +258,10 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| e.to_string())?;
         server.running = running.is_running(&server.id);
+        if let Some(applied) = running.servers.get(&server.id).map(|s| &s.applied) {
+            server.restart_required = *applied != server.settings();
+            server.mcp_active = applied.mcp_enabled;
+        }
         let clients = client_stmt
             .query_map(rusqlite::params![server.id], |row| {
                 let redirect_uris: String = row.get(5)?;
@@ -456,11 +494,33 @@ pub fn lookup_user_data(conn: &Connection, server_id: i64, username: &str) -> Re
     }
 }
 
+fn validate_expiry(label: &str, seconds: i64) -> Result<(), String> {
+    if (0..=MAX_TOKEN_EXPIRY_SECS).contains(&seconds) {
+        Ok(())
+    } else {
+        Err(format!("{} must be between 0 and {} seconds", label, MAX_TOKEN_EXPIRY_SECS))
+    }
+}
+
+fn validate_redirect_override(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    match reqwest::Url::parse(value) {
+        Ok(url) if matches!(url.scheme(), "http" | "https") && url.has_host() => Ok(()),
+        _ => Err("Redirect URL override must be an absolute http(s) URL".to_string()),
+    }
+}
+
 pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInput) -> Result<(), String> {
+    let redirect_url_override = settings.redirect_url_override.trim();
+    validate_redirect_override(redirect_url_override)?;
+    validate_expiry("Access token expiry", settings.access_token_expiry)?;
+    validate_expiry("Refresh token expiry", settings.refresh_token_expiry)?;
     log::info!(
         "update_server_settings: id={}, redirect_override={}, access_expiry={}, refresh_expiry={}, user_based={}, cimd={}, dcr={}, cimd_allow_http={}, mcp={}",
         id,
-        settings.redirect_url_override,
+        redirect_url_override,
         settings.access_token_expiry,
         settings.refresh_token_expiry,
         settings.user_based,
@@ -473,7 +533,7 @@ pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInpu
         "UPDATE server_configs SET redirect_url_override = ?1, access_token_expiry = ?2, refresh_token_expiry = ?3, user_based = ?4,
          cimd_enabled = ?5, dcr_enabled = ?6, cimd_allow_http = ?7, mcp_enabled = ?8 WHERE id = ?9",
         rusqlite::params![
-            settings.redirect_url_override,
+            redirect_url_override,
             settings.access_token_expiry,
             settings.refresh_token_expiry,
             settings.user_based as i64,
@@ -523,6 +583,16 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
 
     let port = extract_port(&auth_server_url)?;
     let issuer_url = format!("http://localhost:{}", port);
+    let applied = ServerSettingsInput {
+        redirect_url_override: redirect_url_override.clone(),
+        access_token_expiry,
+        refresh_token_expiry,
+        user_based,
+        cimd_enabled,
+        dcr_enabled,
+        cimd_allow_http,
+        mcp_enabled,
+    };
 
     // Generate a random signing key for JWT tokens
     let mut rng = rand::thread_rng();
@@ -536,8 +606,9 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         auth_codes: Arc::new(Mutex::new(HashMap::new())),
         refresh_tokens: Arc::new(Mutex::new(HashMap::new())),
         redirect_url_override: if redirect_url_override.is_empty() { None } else { Some(redirect_url_override) },
-        access_token_expiry: access_token_expiry as u64,
-        refresh_token_expiry: refresh_token_expiry as u64,
+        // Rows saved before expiries were validated can hold values outside the range.
+        access_token_expiry: access_token_expiry.clamp(0, MAX_TOKEN_EXPIRY_SECS) as u64,
+        refresh_token_expiry: refresh_token_expiry.clamp(0, MAX_TOKEN_EXPIRY_SECS) as u64,
         user_based,
         cimd_enabled,
         dcr_enabled,
@@ -569,7 +640,7 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         }
     });
 
-    running.servers.insert(id, RunningServer { handle, shutdown_tx });
+    running.servers.insert(id, RunningServer { handle, shutdown_tx, port, applied });
     log::info!("server started on port {}", port);
     Ok(())
 }
@@ -588,6 +659,79 @@ pub fn stop(running: &mut RunningServers, id: i64) -> Result<(), String> {
     }
 }
 
+/// Stops the server and starts it again with its saved settings. If the start fails the
+/// server stays stopped and the error says why.
+pub fn restart(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64, app_handle: tauri::AppHandle) -> Result<(), String> {
+    stop(running, id)?;
+    start(db, running, id, app_handle)
+}
+
+/// The name of a configured server on `port`, for explaining why nothing answers there.
+pub fn server_name_on_port(conn: &Connection, port: u16) -> Result<Option<String>, String> {
+    let mut stmt = conn
+        .prepare("SELECT config_name, auth_server_url FROM server_configs ORDER BY id ASC")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows.into_iter().find(|(_, url)| extract_port(url) == Ok(port)).map(|(name, _)| name))
+}
+
+#[derive(Clone, Copy)]
+struct CimdAccess {
+    enabled: bool,
+    allow_http: bool,
+}
+
+fn restart_or_enable(saved: bool, setting: &str) -> String {
+    if saved {
+        "The setting is saved, so restart the server.".to_string()
+    } else {
+        format!("Turn on \"{}\" in its settings, save, and restart it.", setting)
+    }
+}
+
+fn cimd_problem(name: &str, applied: CimdAccess, saved: CimdAccess, client_id: &str) -> Option<String> {
+    let setting_label = "Client ID metadata documents";
+    let is_document = |allow_http| matches!(cimd::classify_client_id(client_id, allow_http), ClientIdKind::MetadataDocument(_));
+    if !is_document(true) {
+        return None;
+    }
+    if !applied.enabled {
+        return Some(format!(
+            "Server \"{}\" is not accepting client metadata documents. {}",
+            name,
+            restart_or_enable(saved.enabled, setting_label)
+        ));
+    }
+    (!is_document(applied.allow_http)).then(|| {
+        format!(
+            "Server \"{}\" does not accept this http client ID URL. {}",
+            name,
+            restart_or_enable(saved.allow_http, "Allow http client ID URLs on localhost")
+        )
+    })
+}
+
+/// Why the running server on `port` will refuse this client metadata document URL, if it will.
+/// Checked before opening a browser, where the refusal could not reach this app.
+pub fn local_cimd_problem(conn: &Connection, running: &RunningServers, port: u16, client_id: &str) -> Result<Option<String>, String> {
+    let Some((id, server)) = running.servers.iter().find(|(_, server)| server.port == port) else {
+        return Ok(None);
+    };
+    let (name, enabled, allow_http) = conn
+        .query_row(
+            "SELECT config_name, cimd_enabled, cimd_allow_http FROM server_configs WHERE id = ?1",
+            rusqlite::params![id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0, row.get::<_, i64>(2)? != 0)),
+        )
+        .map_err(|e| e.to_string())?;
+    let applied = CimdAccess { enabled: server.applied.cimd_enabled, allow_http: server.applied.cimd_allow_http };
+    Ok(cimd_problem(&name, applied, CimdAccess { enabled, allow_http }, client_id))
+}
+
 fn extract_port(url: &str) -> Result<u16, String> {
     let rest = url
         .strip_prefix("http://")
@@ -604,6 +748,7 @@ fn extract_port(url: &str) -> Result<u16, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db;
 
     fn test_runtime() -> RunningServers {
         RunningServers::new(tokio::runtime::Runtime::new().expect("create runtime"))
@@ -620,6 +765,85 @@ mod tests {
             cimd_allow_http: false,
             mcp_enabled: false,
         }
+    }
+
+    fn insert_running(running: &mut RunningServers, id: i64, port: u16, applied: ServerSettingsInput) {
+        let handle = running.runtime.spawn(async {});
+        let (shutdown_tx, _) = oneshot::channel();
+        running.servers.insert(id, RunningServer { handle, shutdown_tx, port, applied });
+    }
+
+    #[test]
+    fn create_requires_a_name_and_allows_loopback_http_client_ids() {
+        let conn = db::open_test_connection();
+        assert!(create(&conn, "   ", "http://localhost:9500", "http://localhost:9500/token").is_err());
+        create(&conn, "  named  ", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let server = get_all(&conn, &test_runtime()).unwrap().remove(0);
+        assert_eq!(server.config_name, "named");
+        assert!(server.cimd_allow_http);
+    }
+
+    #[test]
+    fn update_settings_rejects_invalid_values() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        for bad in [settings("", -5, 60, false), settings("", 60, -1, false), settings("", MAX_TOKEN_EXPIRY_SECS + 1, 60, false), settings("not a url", 60, 60, false), settings("ftp://host/cb", 60, 60, false)] {
+            assert!(update_settings(&conn, 1, &bad).is_err(), "{bad:?}");
+        }
+        update_settings(&conn, 1, &settings(" http://localhost:1/cb ", 0, 60, false)).unwrap();
+        let server = get_all(&conn, &test_runtime()).unwrap().remove(0);
+        assert_eq!(server.redirect_url_override, "http://localhost:1/cb");
+        assert_eq!(server.access_token_expiry, 0);
+    }
+
+    #[test]
+    fn running_server_reports_settings_it_has_not_applied() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let mut running = test_runtime();
+        let stored = get_all(&conn, &running).unwrap().remove(0).settings();
+        insert_running(&mut running, 1, 9500, stored.clone());
+        let server = get_all(&conn, &running).unwrap().remove(0);
+        assert!(!server.restart_required && !server.mcp_active);
+
+        update_settings(&conn, 1, &ServerSettingsInput { mcp_enabled: true, ..stored }).unwrap();
+        let server = get_all(&conn, &running).unwrap().remove(0);
+        assert!(server.restart_required && server.mcp_enabled && !server.mcp_active);
+    }
+
+    #[test]
+    fn stopped_server_never_needs_a_restart() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        update_settings(&conn, 1, &settings("", 60, 60, true)).unwrap();
+        assert!(!get_all(&conn, &test_runtime()).unwrap().remove(0).restart_required);
+    }
+
+    #[test]
+    fn server_name_on_port_matches_the_configured_port() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500/authorize", "http://localhost:9500/token").unwrap();
+        assert_eq!(server_name_on_port(&conn, 9500).unwrap().as_deref(), Some("server"));
+        assert_eq!(server_name_on_port(&conn, 9501).unwrap(), None);
+    }
+
+    #[test]
+    fn local_cimd_problem_explains_the_setting_to_change() {
+        let conn = db::open_test_connection();
+        create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
+        let client_id = "http://127.0.0.1:5757/client-metadata/1";
+        let mut running = test_runtime();
+        assert_eq!(local_cimd_problem(&conn, &running, 9500, client_id).unwrap(), None);
+
+        // The saved setting is on, but this instance started with it off.
+        insert_running(&mut running, 1, 9500, settings("", 60, 60, false));
+        let problem = local_cimd_problem(&conn, &running, 9500, client_id).unwrap().unwrap();
+        assert!(problem.contains("restart the server"), "{problem}");
+
+        update_settings(&conn, 1, &settings("", 60, 60, false)).unwrap();
+        let problem = local_cimd_problem(&conn, &running, 9500, client_id).unwrap().unwrap();
+        assert!(problem.contains("Allow http client ID URLs on localhost"), "{problem}");
+        assert_eq!(local_cimd_problem(&conn, &running, 9500, "https://client.example/doc").unwrap(), None);
     }
 
     #[test]
@@ -666,7 +890,7 @@ mod tests {
         assert!(config.users.is_empty());
         assert!(config.cimd_enabled);
         assert!(config.dcr_enabled);
-        assert!(!config.cimd_allow_http);
+        assert!(config.cimd_allow_http);
         assert!(!config.mcp_enabled);
     }
 

@@ -41,7 +41,7 @@ pub fn classify_client_id(client_id: &str, allow_http: bool) -> ClientIdKind {
     let ineligible = |reason: &str| ClientIdKind::Ineligible(reason.to_string());
     if url.scheme() == "http" && !(allow_http && is_loopback_host(&url)) {
         return ineligible(
-            "client ID URLs must use https (http is accepted only for localhost, 127.0.0.1 and [::1] when \"Allow http client ID URLs\" is on)",
+            "client ID URLs must use https (http is accepted only for localhost, 127.0.0.1 and [::1] when the server's \"Allow http client ID URLs on localhost\" setting is on)",
         );
     }
     if url.fragment().is_some() {

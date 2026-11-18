@@ -123,7 +123,7 @@ impl Probe {
         let response = match request.send().await {
             Ok(response) => response,
             Err(e) => {
-                self.fail(step, format!("Request failed: {}", e));
+                self.fail(step, format!("Request failed: {}", crate::auth_client::request_error_detail(&e)));
                 return None;
             }
         };

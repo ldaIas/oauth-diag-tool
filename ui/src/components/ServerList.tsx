@@ -3,7 +3,9 @@
 
 import { useState, type ReactNode } from "react";
 import type { OAuthClient, ServerConfig, ServerUser } from "../bindings";
+import { confirmDelete } from "../confirmDelete";
 import type { ServerListUi } from "../hooks/useServerListUi";
+import { deleteClientMessage, deleteServerMessage, deleteUserMessage } from "../lib/deleteMessages";
 import type { ImportedClientFields } from "../lib/clientConfigForm";
 import { helpText, type HelpKey } from "../lib/help";
 import { claudeMcpAddCommand, mcpUrl } from "../lib/mcpEndpoint";
@@ -11,7 +13,8 @@ import { nextPort } from "../lib/ports";
 import { matchesSearch } from "../lib/search";
 import { clientIdHost, clientSearchTerms, hasSecret, registrationLabel } from "../lib/serverClients";
 import type { ClientMetadataFetch } from "../lib/serverEvents";
-import { canSaveUserEdit, defaultUserData, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
+import { settingsChanged } from "../lib/serverSettings";
+import { canSaveUserEdit, defaultUserData, userEditChanged, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
 import { HelpTip } from "./HelpTip";
 import { ServerSettingsForm } from "./ServerSettingsForm";
@@ -88,6 +91,18 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
     });
   }
 
+  async function deleteServer() {
+    if (await confirmDelete(deleteServerMessage(server))) {
+      await api.deleteServerConfig(server.id);
+    }
+  }
+
+  async function deleteClient(client: OAuthClient) {
+    if (await confirmDelete(deleteClientMessage(client))) {
+      await api.deleteClient(client.id);
+    }
+  }
+
   if (!cardExpanded) {
     return (
       <div className="server-card collapsed">
@@ -114,6 +129,15 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
           onToggle={() => ui.toggleCard(server.id)}
         />
         <div className="server-card-right">
+          {server.restartRequired && (
+            <button
+              className="btn-server-control btn-start"
+              title="Applies the saved settings. Tokens this server already issued stop working."
+              onClick={() => void api.restartServer(server.id)}
+            >
+              {"\u{21BB} Restart"}
+            </button>
+          )}
           {server.running ? (
             <button className="btn-server-control btn-stop" onClick={() => void api.stopServer(server.id)}>
               {"\u{25A0} Stop"}
@@ -124,11 +148,14 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
             </button>
           )}
           <div className={server.running ? "status-dot running" : "status-dot"} />
-          <span className="status-label">{server.running ? "running" : "stopped"}</span>
+          <span className={server.restartRequired ? "status-label status-label-warning" : "status-label"}>
+            {serverStatusLabel(server)}
+          </span>
           <button
             className="btn-delete"
-            onClick={() => void api.deleteServerConfig(server.id)}
+            onClick={() => void deleteServer()}
             disabled={server.running}
+            title={server.running ? "Stop the server before deleting it" : undefined}
           >
             {"\u{1F5D1}"}
           </button>
@@ -149,12 +176,13 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
           <ServerSettingsForm
             edit={settingsEdit}
             saved={ui.savedSettings.has(server.id)}
+            changed={settingsChanged(settingsEdit, server)}
             onEdit={(patch) => ui.editSettings(server.id, patch)}
             onSave={() => void ui.saveSettings(server.id)}
           />
         )}
       </div>
-      {server.mcpEnabled && <McpSection name={server.configName} issuerUrl={server.issuerUrl} />}
+      {server.mcpEnabled && <McpSection server={server} />}
       <ResourceSection issuerUrl={server.issuerUrl} access={resourceAccess[server.id]} />
       {(server.cimdEnabled || (clientMetadataFetches[server.id] ?? []).length > 0) && (
         <MetadataFetchSection fetches={clientMetadataFetches[server.id] ?? []} />
@@ -182,7 +210,7 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
                   key={client.id}
                   client={client}
                   onImport={() => importClient(client)}
-                  onDelete={() => void api.deleteClient(client.id)}
+                  onDelete={() => void deleteClient(client)}
                 />
               ))}
             </div>
@@ -192,9 +220,16 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
   );
 }
 
-function McpSection({ name, issuerUrl }: { name: string; issuerUrl: string }) {
-  const url = mcpUrl(issuerUrl);
-  const command = claudeMcpAddCommand(name, issuerUrl);
+function serverStatusLabel(server: ServerConfig): string {
+  if (server.restartRequired) {
+    return "restart needed";
+  }
+  return server.running ? "running" : "stopped";
+}
+
+function McpSection({ server }: { server: ServerConfig }) {
+  const url = mcpUrl(server.issuerUrl);
+  const command = claudeMcpAddCommand(server.configName, server.issuerUrl);
   return (
     <div className="resource-section">
       <div className="resource-section-header">
@@ -203,6 +238,11 @@ function McpSection({ name, issuerUrl }: { name: string; issuerUrl: string }) {
           <HelpTip text={helpText("server.mcpEndpoint")} />
         </span>
       </div>
+      {!server.mcpActive && (
+        <div className="settings-warning">
+          {server.running ? "Not active yet: restart the server to turn this endpoint on." : "Available once the server is started."}
+        </div>
+      )}
       <CopyLine label="URL" text={url} />
       <CopyLine label="Claude Code" text={command} />
     </div>
@@ -385,9 +425,16 @@ function UsersSection({ server, ui }: { server: ServerConfig; ui: ServerListUi }
                   user={user}
                   edit={ui.userEditOf(user)}
                   saved={ui.savedUsers.has(user.id)}
+                  changed={userEditChanged(ui.userEditOf(user), user)}
                   onEdit={(patch) => ui.editUser(user, patch)}
                   onSave={() => void ui.saveUser(user)}
-                  onDelete={() => ui.deleteUser(user.id)}
+                  onDelete={() => {
+                    void confirmDelete(deleteUserMessage(user)).then((confirmed) => {
+                      if (confirmed) {
+                        ui.deleteUser(user.id);
+                      }
+                    });
+                  }}
                 />
               ))}
             </div>
@@ -454,6 +501,7 @@ function UserCard({
   user,
   edit,
   saved,
+  changed,
   onEdit,
   onSave,
   onDelete,
@@ -461,6 +509,7 @@ function UserCard({
   user: ServerUser;
   edit: UserEdit;
   saved: boolean;
+  changed: boolean;
   onEdit: (patch: Partial<UserEdit>) => void;
   onSave: () => void;
   onDelete: () => void;
@@ -492,8 +541,9 @@ function UserCard({
         />
       </UserField>
       <div className="settings-actions">
-        {saved && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
-        <button className="btn-save-settings" disabled={saved || !canSaveUserEdit(edit)} onClick={onSave}>
+        {changed && <span className="settings-unsaved-label">Unsaved changes</span>}
+        {saved && !changed && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
+        <button className="btn-save-settings" disabled={!changed || !canSaveUserEdit(edit)} onClick={onSave}>
           Save
         </button>
       </div>

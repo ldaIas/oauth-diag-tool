@@ -177,10 +177,10 @@
       "description": "Permission identifier",
       "oneOf": [
         {
-          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-update-server-settings`\n- `allow-add-user-to-server`\n- `allow-update-user`\n- `allow-delete-user`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-refresh-token`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`\n- `allow-call-resource`\n- `allow-probe-mcp`\n- `allow-register-client`\n- `allow-verify-client-document`",
+          "description": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-update-server-settings`\n- `allow-add-user-to-server`\n- `allow-update-user`\n- `allow-delete-user`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-restart-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-refresh-token`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`\n- `allow-call-resource`\n- `allow-probe-mcp`\n- `allow-register-client`\n- `allow-verify-client-document`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-update-server-settings`\n- `allow-add-user-to-server`\n- `allow-update-user`\n- `allow-delete-user`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-refresh-token`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`\n- `allow-call-resource`\n- `allow-probe-mcp`\n- `allow-register-client`\n- `allow-verify-client-document`"
+          "markdownDescription": "Default app permissions - allows all custom commands\n#### This default permission set includes:\n\n- `allow-create-server-config`\n- `allow-get-server-configs`\n- `allow-delete-server-config`\n- `allow-add-client-to-server`\n- `allow-delete-client`\n- `allow-get-client-configs`\n- `allow-create-client-config`\n- `allow-update-client-config`\n- `allow-delete-client-config`\n- `allow-update-server-settings`\n- `allow-add-user-to-server`\n- `allow-update-user`\n- `allow-delete-user`\n- `allow-start-server`\n- `allow-stop-server`\n- `allow-restart-server`\n- `allow-get-callback-url`\n- `allow-authorize-client`\n- `allow-refresh-token`\n- `allow-cancel-authorization`\n- `allow-fetch-server-metadata`\n- `allow-call-resource`\n- `allow-probe-mcp`\n- `allow-register-client`\n- `allow-verify-client-document`"
         },
         {
           "description": "Allow adding clients to server configurations",
@@ -289,6 +289,12 @@
           "type": "string",
           "const": "allow-register-client",
           "markdownDescription": "Allow registering a client with an authorization server's dynamic registration endpoint"
+        },
+        {
+          "description": "Allow restarting OAuth servers",
+          "type": "string",
+          "const": "allow-restart-server",
+          "markdownDescription": "Allow restarting OAuth servers"
         },
         {
           "description": "Allow starting OAuth servers",

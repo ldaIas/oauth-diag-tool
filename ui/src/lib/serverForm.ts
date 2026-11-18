@@ -46,3 +46,7 @@ export function setServerFormPort(model: ServerFormModel, rawInput: string): Ser
   const port = Math.min(MAX_PORT, Math.max(MIN_PORT, base));
   return recomputeUrls({ ...model, portInput: cleaned, port });
 }
+
+export function validateServerForm(model: ServerFormModel): { name?: string } {
+  return model.name.trim() === "" ? { name: "Enter a server name" } : {};
+}

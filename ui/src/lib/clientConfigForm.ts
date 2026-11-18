@@ -5,6 +5,7 @@ import type { RegistrationMode, ResourceKind, ServerMetadataResponse, TokenAuthM
 import { sortedEntries } from "./params";
 import { credentialStyle, registrationSupport, type CredentialStyle, type RegistrationResult, type RegistrationSupport } from "./registration";
 import type { ClientConfigFields, ParsedClientConfig } from "./types";
+import { isHttpUrl } from "./urls";
 
 export interface ExtraParamRow {
   key: string;
@@ -217,6 +218,58 @@ export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetad
     registration: registrationSupport(metadata),
     pulledFrom: metadataSource(merged),
   };
+}
+
+export type ClientConfigFormErrors = Partial<
+  Record<"name" | "resourceUrl" | "mcpUrl" | "issuerUrl" | "authorizationUrl" | "tokenUrl" | "clientId", string>
+>;
+
+const HTTP_URL_ERROR = "Enter an absolute http(s) URL";
+
+function optionalUrlError(value: string): string | undefined {
+  return value.trim() === "" || isHttpUrl(value) ? undefined : HTTP_URL_ERROR;
+}
+
+function requiredUrlError(value: string): string | undefined {
+  return value.trim() === "" ? "Required for this grant type" : optionalUrlError(value);
+}
+
+function clientIdError(form: ClientConfigFormModel): string | undefined {
+  if (form.clientId.trim() !== "") {
+    return undefined;
+  }
+  switch (form.registrationMode) {
+    case "preregistered":
+      return "Enter the client ID the server issued";
+    case "cimd":
+      return form.serveClientMetadata ? undefined : "Enter the URL of your client metadata document";
+    case "dcr":
+      return "Use Register to get a client ID, or enter one";
+    default: {
+      const exhaustive: never = form.registrationMode;
+      return exhaustive;
+    }
+  }
+}
+
+/** What must be fixed before saving. Endpoints are not checked when metadata will supply them. */
+export function validateClientConfigForm(form: ClientConfigFormModel): ClientConfigFormErrors {
+  const candidates: ClientConfigFormErrors = {
+    name: form.name.trim() === "" ? "Enter a name" : undefined,
+    resourceUrl: optionalUrlError(form.resourceUrl),
+    mcpUrl: optionalUrlError(form.mcpUrl),
+    issuerUrl:
+      form.useServerMetadata && !canFetchMetadata(metadataSource(form))
+        ? "Enter an issuer URL, or a resource or MCP URL to discover it from"
+        : optionalUrlError(form.issuerUrl),
+    clientId: clientIdError(form),
+  };
+  if (!form.useServerMetadata) {
+    candidates.tokenUrl = requiredUrlError(form.tokenUrl);
+    candidates.authorizationUrl =
+      form.grantType === "authorization_code" ? requiredUrlError(form.authorizationUrl) : optionalUrlError(form.authorizationUrl);
+  }
+  return Object.fromEntries(Object.entries(candidates).filter(([, message]) => message !== undefined));
 }
 
 export function formCredentialStyle(form: ClientConfigFormModel): CredentialStyle {

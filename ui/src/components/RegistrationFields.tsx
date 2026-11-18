@@ -39,11 +39,12 @@ const METHODS = Object.keys(METHOD_LABELS) as TokenAuthMethod[];
 
 interface RegistrationFieldsProps {
   model: ClientConfigFormModel;
+  clientIdError: string | undefined;
   onChange: (model: ClientConfigFormModel) => void;
 }
 
 /** Registration mode, client ID, and client secret, with the controls each mode needs. */
-export function RegistrationFields({ model, onChange }: RegistrationFieldsProps) {
+export function RegistrationFields({ model, clientIdError, onChange }: RegistrationFieldsProps) {
   const { api, callbackUrl } = useAppState();
   const [registerState, setRegisterState] = useState<AuthState>({ kind: "idle" });
   // A registration finishes after the user may have kept typing; it must merge into the latest form.
@@ -131,6 +132,7 @@ export function RegistrationFields({ model, onChange }: RegistrationFieldsProps)
               value={model.clientId}
               placeholder="https://client.example.com/oauth/metadata.json"
               help="clientConfig.clientIdUrl"
+              error={clientIdError}
               onChange={(clientId) => onChange({ ...model, clientId })}
             />
           )}
@@ -193,6 +195,7 @@ export function RegistrationFields({ model, onChange }: RegistrationFieldsProps)
           value={model.clientId}
           placeholder="client-id"
           help="clientConfig.clientId"
+          error={clientIdError}
           onChange={(clientId) => onChange({ ...model, clientId })}
         />
       )}
