@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-17
 - Replace the Elm frontend with TypeScript + React, using tauri-specta generated bindings; Tauri 2.12.5 [PR](https://github.com/ldaIas/oauth-diag-tool/pull/16)
 - Add user-based access to OAuth servers [PR](https://github.com/ldaIas/oauth-diag-tool/pull/17)
   - Servers can have users (username, password, user data). Users can be added, edited (password, user data), and deleted from the server card, and created from the OAuth login page
