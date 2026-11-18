@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.1.2] - 2026-11-18
 - Add a per-server Public URL that replaces the loopback issuer in metadata, challenges and tokens, so a server can be used through a tunnel [PR](https://github.com/ldaIas/oauth-diag-tool/pull/31)
 
 ## [0.1.1] - 2026-11-17
