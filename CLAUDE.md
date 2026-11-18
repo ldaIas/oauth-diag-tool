@@ -98,7 +98,7 @@ CI (`.github/workflows/ci.yml`) runs two jobs on pushes to `main` and on PRs: `r
 4. Regenerate the bindings: run `cargo tauri dev` (debug builds write `ui/src/bindings.ts`) or `UPDATE_BINDINGS=1 cargo test bindings_are_current` from `src-tauri/`.
 5. Call it as `commands.<camelCaseName>` from `ui/src/api.ts`, using the existing `reported`/`mutate`/`unreported` helpers for error handling.
 
-**Frontend serves from** `ui/dist/` (configured as `frontendDist` in `tauri.conf.json`). The dev server is `http://localhost:5173` (`devUrl`); `beforeDevCommand` and `beforeBuildCommand` run the `ui/` npm scripts. Tauri runs them with `ui/` as the working directory (it's the folder with `package.json`), so they must not `cd ui`.
+**Frontend serves from** `ui/dist/` (configured as `frontendDist` in `tauri.conf.json`). The dev server is `http://localhost:5173` (`devUrl`); `beforeDevCommand` and `beforeBuildCommand` run the `ui/` npm scripts. Both set `cwd` to `../ui` (relative to `src-tauri/`) because the repo has more than one `package.json`, and Tauri's own lookup can pick `site/`.
 
 ## Key Conventions
 

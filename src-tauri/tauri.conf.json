@@ -1,13 +1,13 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "OAuth Diagnostic Tool",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "identifier": "com.ldaIas.oauth-diag-tool",
   "build": {
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "npm run dev",
-    "beforeBuildCommand": "npm run build"
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../ui" },
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../ui" }
   },
   "app": {
     "withGlobalTauri": false,
