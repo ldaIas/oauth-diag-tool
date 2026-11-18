@@ -56,7 +56,7 @@ export function AuthResponseView({ state, loadingLabel = "Requesting token..." }
     case "loading":
       return (
         <div className="auth-response">
-          <span className="auth-loading">{loadingLabel}</span>
+          <span className="auth-loading">{state.label ?? loadingLabel}</span>
         </div>
       );
     case "done": {

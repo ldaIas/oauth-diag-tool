@@ -41,6 +41,7 @@ export interface Api {
   deleteClient(id: number): Promise<boolean>;
   startServer(id: number): Promise<boolean>;
   stopServer(id: number): Promise<boolean>;
+  restartServer(id: number): Promise<boolean>;
   updateServerSettings(id: number, settings: ServerSettings): Promise<boolean>;
   addUserToServer(serverId: number, user: NewUser): Promise<boolean>;
   updateUser(id: number, edit: UserEdit): Promise<boolean>;
@@ -130,6 +131,7 @@ export function createApi(callbacks: ApiCallbacks): Api {
     deleteClient: (id) => mutate("delete_client", () => commands.deleteClient(id), loadServerConfigs),
     startServer: (id) => mutate("start_server", () => commands.startServer(id), loadServerConfigs),
     stopServer: (id) => mutate("stop_server", () => commands.stopServer(id), loadServerConfigs),
+    restartServer: (id) => mutate("restart_server", () => commands.restartServer(id), loadServerConfigs),
     updateServerSettings: (id, settings) =>
       mutate(
         "update_server_settings",

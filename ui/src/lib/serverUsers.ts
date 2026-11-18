@@ -57,3 +57,9 @@ export function userEditFor(user: ServerUser): UserEdit {
 export function canSaveUserEdit(edit: UserEdit): boolean {
   return edit.password !== "";
 }
+
+/** Empty user data means the default text, so it matches a user who already has the default. */
+export function userEditChanged(edit: UserEdit, user: ServerUser): boolean {
+  const userData = edit.userData.trim() === "" ? defaultUserData(user.username) : edit.userData;
+  return edit.password !== user.password || userData !== user.userData;
+}

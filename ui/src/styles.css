@@ -19,6 +19,7 @@
   --accent:     #4ade80;
   --accent-dim: #1a3d28;
   --danger:     #f87171;
+  --warning:    #fbbf24;
   --font:       'JetBrains Mono', monospace;
 }
 
@@ -285,6 +286,7 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 }
 
 .status-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.06em; }
+.status-label-warning { color: var(--warning); }
 
 .btn-server-control {
   padding: 3px 10px;
@@ -550,6 +552,23 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .btn-save-settings:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.form-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--danger);
+  letter-spacing: 0.04em;
+}
+
+.form-input[aria-invalid="true"] { border-color: var(--danger); }
+
+.settings-unsaved-label,
+.settings-warning {
+  font-size: 10px;
+  color: var(--warning);
+  letter-spacing: 0.06em;
 }
 
 .settings-saved-label {

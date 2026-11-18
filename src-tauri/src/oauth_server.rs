@@ -488,11 +488,10 @@ async fn resolve_authorize_client(
     };
 
     let Some(row) = lookup_registered_client(state, client_id).map_err(|e| Box::new(e.into_response()))? else {
-        let description = match ineligible_reason {
-            Some(reason) => format!("Unknown client_id; as a metadata document URL it is not usable: {}", reason),
-            None => "Unknown client_id".to_string(),
-        };
-        return Err(Box::new(json_error(StatusCode::UNAUTHORIZED, "invalid_client", &description)));
+        return Err(match ineligible_reason {
+            Some(reason) => reject("Client ID URL not accepted", &reason),
+            None => Box::new(json_error(StatusCode::UNAUTHORIZED, "invalid_client", "Unknown client_id")),
+        });
     };
 
     if !row.redirect_uris.is_empty() && !row.redirect_uris.iter().any(|registered| registered == redirect_uri) {
@@ -1180,7 +1179,11 @@ async fn token_refresh(
     };
 
     let entry = entry.ok_or_else(|| {
-        token_error(StatusCode::BAD_REQUEST, "invalid_grant", "Invalid refresh token")
+        token_error(
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "Invalid refresh token. This server keeps refresh tokens in memory, so restarting it discards them: authorize again.",
+        )
     })?;
 
     // Check expiration
@@ -1377,13 +1380,12 @@ fn authenticate_bearer(
     ) {
         Ok(data) => data.claims,
         Err(e) => {
-            return Err(reject(
-                "",
-                None,
-                Some("invalid_token"),
-                "invalid_token",
-                &format!("Token validation failed: {}", e),
-            ));
+            let description = if matches!(e.kind(), jsonwebtoken::errors::ErrorKind::InvalidSignature) {
+                "Token signature is not valid for this server. The signing key changes each time the server starts, so tokens issued before a restart are rejected: get a new token.".to_string()
+            } else {
+                format!("Token validation failed: {}", e)
+            };
+            return Err(reject("", None, Some("invalid_token"), "invalid_token", &description));
         }
     };
 
@@ -2280,23 +2282,10 @@ mod tests {
     #[tokio::test]
     async fn http_client_id_urls_need_the_loopback_setting() {
         let ts = start(|s| s.cimd_allow_http = false).await;
-        let (status, body) = {
-            let response = ts
-                .http
-                .get(format!("{}/authorize", ts.base))
-                .query(&[
-                    ("response_type", "code"),
-                    ("client_id", "http://127.0.0.1:9/c.json"),
-                    ("redirect_uri", REDIRECT),
-                ])
-                .send()
-                .await
-                .unwrap();
-            (response.status(), response.json::<serde_json::Value>().await.unwrap())
-        };
-        assert_eq!(status, StatusCode::UNAUTHORIZED);
-        assert_eq!(body["error"], "invalid_client");
-        assert!(body["error_description"].as_str().unwrap().contains("must use https"));
+        let (status, page) = ts.authorize("http://127.0.0.1:9/c.json", REDIRECT, &challenge()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(page.contains("Client ID URL not accepted"), "{page}");
+        assert!(page.contains("must use https"), "{page}");
     }
 
     #[tokio::test]

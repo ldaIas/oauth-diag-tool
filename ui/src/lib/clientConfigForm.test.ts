@@ -25,6 +25,7 @@ import {
   tokenResourceUrl,
   updateAt,
   withRegistrationMode,
+  validateClientConfigForm,
 } from "./clientConfigForm";
 import type { ParsedClientConfig } from "./types";
 
@@ -333,5 +334,43 @@ describe("registration", () => {
     const form = { ...base, registrationMode: "dcr" as const, tokenAuthMethod: "client_secret_post" as const };
     const applied = applyRegistration(form, { kind: "registered", clientId: "id", clientSecret: "s", tokenAuthMethod: null });
     expect(applied).toMatchObject({ clientId: "id", clientSecret: "s", tokenAuthMethod: "client_secret_post" });
+  });
+});
+
+describe("validateClientConfigForm", () => {
+  const valid = {
+    ...initClientConfigForm(),
+    name: "cfg",
+    authorizationUrl: "http://localhost:9500/authorize",
+    tokenUrl: "http://localhost:9500/token",
+    clientId: "id",
+  };
+
+  test("accepts a complete form", () => {
+    expect(validateClientConfigForm(valid)).toEqual({});
+  });
+
+  test("flags every required field of a blank form", () => {
+    expect(Object.keys(validateClientConfigForm(initClientConfigForm())).sort()).toEqual(["authorizationUrl", "clientId", "name", "tokenUrl"]);
+  });
+
+  test("client credentials does not need an authorization URL", () => {
+    expect(validateClientConfigForm({ ...valid, grantType: "client_credentials", authorizationUrl: "" })).toEqual({});
+  });
+
+  test("flags malformed optional URLs", () => {
+    expect(Object.keys(validateClientConfigForm({ ...valid, resourceUrl: "nope", mcpUrl: "/mcp" })).sort()).toEqual(["mcpUrl", "resourceUrl"]);
+  });
+
+  test("metadata supplies the endpoints but needs somewhere to start", () => {
+    const form = { ...valid, authorizationUrl: "", tokenUrl: "", useServerMetadata: true };
+    expect(validateClientConfigForm(form).issuerUrl).toBeDefined();
+    expect(validateClientConfigForm({ ...form, resourceUrl: "http://localhost:9500/resource" })).toEqual({});
+  });
+
+  test("a locally served metadata document needs no client ID", () => {
+    const form = { ...valid, clientId: "", registrationMode: "cimd" as const, serveClientMetadata: true };
+    expect(validateClientConfigForm(form)).toEqual({});
+    expect(validateClientConfigForm({ ...form, serveClientMetadata: false }).clientId).toBeDefined();
   });
 });

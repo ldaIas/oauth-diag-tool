@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ClientConfigListUi, DisabledParamsField, ExpandableSection } from "../hooks/useClientConfigListUi";
+import { confirmDelete } from "../confirmDelete";
+import { deleteClientConfigMessage } from "../lib/deleteMessages";
 import { helpText } from "../lib/help";
-import { findAccessToken } from "../lib/accessToken";
 import { metadataSourceFor, tokenResourceUrl } from "../lib/clientConfigForm";
 import { sectionParams, sortedEntries } from "../lib/params";
 import { credentialStyle, refreshParamNames, sendParamNames, sendsClientSecret, tokenParamNames } from "../lib/registration";
@@ -91,7 +92,15 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
   const verifyState = ui.verifyState(config.id);
   const verifyExpanded = ui.isExpanded("verify", config.id);
   const documentExpanded = ui.isExpanded("document", config.id);
-  const accessToken = state.kind === "done" ? findAccessToken(state.response.body) : null;
+  const accessToken = ui.accessToken(config.id);
+  const previousTokenResponse = ui.previousTokenResponse(config.id);
+  const previousTokenExpanded = ui.isExpanded("lastToken", config.id);
+
+  async function deleteConfig() {
+    if (await confirmDelete(deleteClientConfigMessage(config))) {
+      await api.deleteClientConfig(config.id);
+    }
+  }
 
   function paramNames(standard: readonly string[]) {
     return sectionParams(standard, tokenResource, extraKeys);
@@ -172,7 +181,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
           <button className="btn-import" onClick={onEdit}>
             Edit
           </button>
-          <button className="btn-delete" onClick={() => void api.deleteClientConfig(config.id)}>
+          <button className="btn-delete" onClick={() => void deleteConfig()}>
             {"\u{1F5D1}"}
           </button>
         </div>
@@ -275,6 +284,14 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
             {`${chevron(resultsExpanded)} Results`}
           </span>
           {resultsExpanded && <AuthResponseView state={state} />}
+        </div>
+      )}
+      {previousTokenResponse !== null && (
+        <div className="results-section">
+          <span className="expandable-toggle" onClick={() => ui.toggleSection("lastToken", config.id)}>
+            {`${chevron(previousTokenExpanded)} Last Token Response`}
+          </span>
+          {previousTokenExpanded && <AuthResponseView state={{ kind: "done", response: previousTokenResponse }} />}
         </div>
       )}
       {resourceState.kind !== "idle" && (

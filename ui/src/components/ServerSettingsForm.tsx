@@ -2,27 +2,34 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { helpText, type HelpKey } from "../lib/help";
-import type { SettingsEdit } from "../lib/serverSettings";
+import { validateSettings, type SettingsEdit } from "../lib/serverSettings";
 import { HelpTip } from "./HelpTip";
 import { FieldLabel } from "./shared";
 
 interface ServerSettingsFormProps {
   edit: SettingsEdit;
   saved: boolean;
+  /** The draft differs from what is stored. */
+  changed: boolean;
   onEdit: (patch: Partial<SettingsEdit>) => void;
   onSave: () => void;
 }
 
-export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettingsFormProps) {
+export function ServerSettingsForm({ edit, saved, changed, onEdit, onSave }: ServerSettingsFormProps) {
+  const errors = validateSettings(edit);
+  const valid = Object.keys(errors).length === 0;
   return (
     <div className="settings-form">
-      <div className="settings-hint">Server must be restarted for changes to take effect.</div>
+      <div className="settings-hint">
+        Saved changes apply the next time the server starts. Each start invalidates the tokens the server issued earlier.
+      </div>
       <SettingsField
         label="Redirect URL Override"
         help="serverSettings.redirectUrlOverride"
         type="text"
         placeholder="Leave empty to use client-provided URL"
         value={edit.redirectUrlOverride}
+        error={errors.redirectUrlOverride}
         onChange={(redirectUrlOverride) => onEdit({ redirectUrlOverride })}
       />
       <SettingsField
@@ -31,6 +38,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
         type="number"
         placeholder="3600"
         value={edit.accessTokenExpiry}
+        error={errors.accessTokenExpiry}
         onChange={(accessTokenExpiry) => onEdit({ accessTokenExpiry })}
       />
       <SettingsField
@@ -39,6 +47,7 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
         type="number"
         placeholder="86400"
         value={edit.refreshTokenExpiry}
+        error={errors.refreshTokenExpiry}
         onChange={(refreshTokenExpiry) => onEdit({ refreshTokenExpiry })}
       />
       <label className="settings-checkbox">
@@ -75,8 +84,9 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
         <HelpTip text={helpText("serverSettings.mcpEnabled")} />
       </label>
       <div className="settings-actions">
-        {saved && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
-        <button className="btn-save-settings" disabled={saved} onClick={onSave}>
+        {changed && <span className="settings-unsaved-label">Unsaved changes</span>}
+        {saved && !changed && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
+        <button className="btn-save-settings" disabled={!changed || !valid} onClick={onSave}>
           Save
         </button>
       </div>
@@ -90,6 +100,7 @@ function SettingsField({
   type,
   placeholder,
   value,
+  error,
   onChange,
 }: {
   label: string;
@@ -97,6 +108,7 @@ function SettingsField({
   type: "text" | "number";
   placeholder: string;
   value: string;
+  error: string | undefined;
   onChange: (value: string) => void;
 }) {
   return (
@@ -107,8 +119,10 @@ function SettingsField({
         type={type}
         placeholder={placeholder}
         value={value}
+        aria-invalid={error !== undefined}
         onChange={(e) => onChange(e.target.value)}
       />
+      {error !== undefined && <span className="form-error">{error}</span>}
     </div>
   );
 }

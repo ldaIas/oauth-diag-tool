@@ -219,12 +219,21 @@ fn local_client_id(id: i64, config: &ClientConfigInput) -> Option<String> {
         .then(|| client_registration::local_document_url(id))
 }
 
+fn validated_name(config: &ClientConfigInput) -> Result<&str, String> {
+    let name = config.name.trim();
+    if name.is_empty() {
+        return Err("Client configuration name is required".to_string());
+    }
+    Ok(name)
+}
+
 pub fn create(conn: &Connection, config: &ClientConfigInput) -> Result<(), String> {
-    log::info!("create_client_config: name={}", config.name);
+    let name = validated_name(config)?;
+    log::info!("create_client_config: name={}", name);
     let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
     tx.execute(
         "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, disabled_refresh_params, resource_url, registration_mode, token_auth_method, serve_client_metadata, mcp_url, token_for_mcp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
-        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp],
+        rusqlite::params![name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp],
     )
     .map_err(|e| {
         log::error!("failed to insert client config: {}", e);
@@ -244,12 +253,13 @@ pub fn create(conn: &Connection, config: &ClientConfigInput) -> Result<(), Strin
 }
 
 pub fn update(conn: &Connection, id: i64, config: &ClientConfigInput) -> Result<(), String> {
+    let name = validated_name(config)?;
     log::info!("update_client_config: id={}", id);
     let local_id = local_client_id(id, config);
     let client_id = local_id.as_deref().unwrap_or(&config.client_id);
     conn.execute(
         "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12, disabled_refresh_params = ?13, resource_url = ?14, registration_mode = ?15, token_auth_method = ?16, serve_client_metadata = ?17, mcp_url = ?18, token_for_mcp = ?19 WHERE id = ?20",
-        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp, id],
+        rusqlite::params![name, config.issuer_url, config.authorization_url, config.token_url, client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp, id],
     )
     .map_err(|e| {
         log::error!("failed to update client config: {}", e);
@@ -390,8 +400,53 @@ pub async fn post_token_request(token_url: &str, request: &TokenRequest) -> Resu
     if let Some((id, secret)) = &request.basic {
         builder = builder.basic_auth(id, Some(secret));
     }
-    let response = builder.send().await.map_err(|e| e.to_string())?;
+    let response = builder.send().await.map_err(|e| request_error_detail(&e))?;
     build_auth_response(response).await
+}
+
+/// reqwest's message stops at "error sending request"; the cause is at the end of its source chain.
+pub fn request_error_detail(error: &reqwest::Error) -> String {
+    let mut cause: &dyn std::error::Error = error;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    if std::ptr::addr_eq(cause, error as &dyn std::error::Error) {
+        error.to_string()
+    } else {
+        format!("{}: {}", error, cause)
+    }
+}
+
+/// A local host and port a request is about to go to.
+pub struct LoopbackTarget {
+    host: String,
+    pub port: u16,
+}
+
+/// The target of `url` when it is on this machine. Remote targets are left to the request
+/// itself, since a browser or proxy may reach hosts this process cannot.
+pub fn loopback_target(url: &str) -> Option<LoopbackTarget> {
+    let parsed = reqwest::Url::parse(url.trim()).ok()?;
+    let host = match parsed.host_str()? {
+        "localhost" => "localhost",
+        "127.0.0.1" => "127.0.0.1",
+        "[::1]" => "::1",
+        _ => return None,
+    };
+    Some(LoopbackTarget { host: host.to_string(), port: parsed.port_or_known_default()? })
+}
+
+/// True only when the connection is actively refused; a slow target gets the benefit of the doubt.
+pub async fn connection_refused(target: &LoopbackTarget) -> bool {
+    let connect = tokio::net::TcpStream::connect((target.host.as_str(), target.port));
+    matches!(tokio::time::timeout(std::time::Duration::from_secs(2), connect).await, Ok(Err(_)))
+}
+
+pub fn unreachable_message(url: &str, port: u16, server_name: Option<&str>) -> String {
+    match server_name {
+        Some(name) => format!("Nothing is answering at {}. Server \"{}\" on port {} is stopped: start it and try again.", url.trim(), name, port),
+        None => format!("Nothing is answering at {}. Check that a server is running on port {}.", url.trim(), port),
+    }
 }
 
 /// The token request that exchanges an authorization code; the config's Token Parameters apply.
@@ -789,7 +844,7 @@ pub async fn call_resource(resource_url: &str, access_token: &str) -> Result<Aut
         .bearer_auth(access_token)
         .send()
         .await
-        .map_err(|e| format!("Failed to call resource: {}", e))?;
+        .map_err(|e| format!("Failed to call resource: {}", request_error_detail(&e)))?;
 
     build_auth_response(response).await
 }
@@ -860,6 +915,49 @@ fn open_browser(url: &str) -> Result<Option<LaunchedBrowser>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn loopback_target_only_matches_this_machine() {
+        assert_eq!(loopback_target("http://localhost:9500/token").unwrap().port, 9500);
+        assert_eq!(loopback_target(" http://127.0.0.1/x ").unwrap().port, 80);
+        assert_eq!(loopback_target("http://[::1]:9/x").unwrap().host, "::1");
+        assert!(loopback_target("https://auth.example.com/token").is_none());
+        assert!(loopback_target("").is_none());
+    }
+
+    #[tokio::test]
+    async fn connection_refused_tells_open_and_closed_ports_apart() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://127.0.0.1:{}/token", listener.local_addr().unwrap().port());
+        let target = loopback_target(&url).unwrap();
+        assert!(!connection_refused(&target).await);
+        drop(listener);
+        assert!(connection_refused(&target).await);
+    }
+
+    #[tokio::test]
+    async fn request_errors_include_their_cause() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        let error = reqwest::get(format!("http://127.0.0.1:{}/", port)).await.unwrap_err();
+        assert!(request_error_detail(&error).to_lowercase().contains("refused"), "{}", request_error_detail(&error));
+    }
+
+    #[test]
+    fn unreachable_message_names_a_configured_server() {
+        assert!(unreachable_message("http://localhost:1/t", 1, Some("mine")).contains("\"mine\" on port 1 is stopped"));
+        assert!(unreachable_message("http://localhost:1/t", 1, None).contains("running on port 1"));
+    }
+
+    #[test]
+    fn configs_require_a_name() {
+        let conn = crate::db::open_test_connection();
+        let unnamed = ClientConfigInput { name: "  ".to_string(), ..sample_input() };
+        assert!(create(&conn, &unnamed).is_err());
+        create(&conn, &sample_input()).unwrap();
+        assert!(update(&conn, 1, &unnamed).is_err());
+    }
 
     #[cfg(unix)]
     fn launched(command: &str, args: &[&str]) -> LaunchedBrowser {

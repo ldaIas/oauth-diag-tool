@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import type { AuthResponse, CheckResult, DiscoveryStep, ProbeReport, ServerMetadataResponse } from "../bindings";
+import { findAccessToken } from "../lib/accessToken";
 import { extractRefreshToken, type AuthOutcome } from "../lib/authResult";
 import { mergeMetadata, type MetadataSource } from "../lib/clientConfigForm";
 import { toggleDisabled, toggleMember, withMember } from "../lib/collections";
@@ -11,7 +12,8 @@ import { useAppState } from "../state";
 
 export type AuthState =
   | { kind: "idle" }
-  | { kind: "loading" }
+  /** `label` replaces the view's default loading text. */
+  | { kind: "loading"; label?: string }
   | { kind: "done"; response: AuthResponse }
   | { kind: "error"; error: string };
 
@@ -46,11 +48,13 @@ export type ExpandableSection =
   | "refreshParams"
   | "metadata"
   | "verify"
-  | "document";
+  | "document"
+  | "lastToken";
 
 export type DisabledParamsField = "disabledParams" | "disabledTokenParams" | "disabledRefreshParams";
 
 const IDLE = { kind: "idle" } as const;
+const WAITING_FOR_BROWSER = "Waiting for the browser. If it shows an error instead of a sign-in or consent page, read it there, then Cancel here.";
 
 function outcomeToState(outcome: AuthOutcome): AuthState {
   return outcome.kind === "failure" ? { kind: "error", error: outcome.error } : { kind: "done", response: outcome.response };
@@ -63,6 +67,10 @@ export interface ClientConfigListUi {
   isCardExpanded(configId: number): boolean;
   toggleCard(configId: number): void;
   authState(configId: number): AuthState;
+  /** The newest access token issued to this config; a later failed request does not remove it. */
+  accessToken(configId: number): string | null;
+  /** The response that issued that token, when the current result is something else. */
+  previousTokenResponse(configId: number): AuthResponse | null;
   metadataState(configId: number): MetadataState;
   resourceState(configId: number): ResourceState;
   probeState(configId: number): ProbeState;
@@ -90,6 +98,7 @@ const NO_EXPANDED: Record<ExpandableSection, ReadonlySet<number>> = {
   metadata: new Set(),
   verify: new Set(),
   document: new Set(),
+  lastToken: new Set(),
 };
 
 /**
@@ -97,8 +106,9 @@ const NO_EXPANDED: Record<ExpandableSection, ReadonlySet<number>> = {
  * in-flight auth and metadata results still land while the form replaces the list.
  */
 export function useClientConfigListUi(): ClientConfigListUi {
-  const { api, patchClientConfig } = useAppState();
+  const { api, clientConfigs, patchClientConfig } = useAppState();
   const [authStates, setAuthStates] = useState<Readonly<Record<number, AuthState>>>({});
+  const [tokenResponses, setTokenResponses] = useState<Readonly<Record<number, AuthResponse>>>({});
   const [metadataStates, setMetadataStates] = useState<Readonly<Record<number, MetadataState>>>({});
   const [resourceStates, setResourceStates] = useState<Readonly<Record<number, ResourceState>>>({});
   const [probeStates, setProbeStates] = useState<Readonly<Record<number, ProbeState>>>({});
@@ -144,6 +154,12 @@ export function useClientConfigListUi(): ClientConfigListUi {
     if (outcome.kind === "failure") {
       return;
     }
+    if (findAccessToken(outcome.response.body) !== null) {
+      setTokenResponses((prev) => ({ ...prev, [configId]: outcome.response }));
+      // These results describe the previous token.
+      setResourceState(configId, IDLE);
+      setProbeState(configId, IDLE);
+    }
     // The backend persists the token itself; this only keeps the Refresh Token button in sync without a reload.
     const refreshToken = extractRefreshToken(outcome.response.body);
     if (refreshToken !== null) {
@@ -151,8 +167,8 @@ export function useClientConfigListUi(): ClientConfigListUi {
     }
   }
 
-  async function runAuth(configId: number, call: (id: number) => Promise<AuthOutcome>) {
-    setAuthState(configId, { kind: "loading" });
+  async function runAuth(configId: number, call: (id: number) => Promise<AuthOutcome>, loading: AuthState = { kind: "loading" }) {
+    setAuthState(configId, loading);
     expand("results", configId);
     applyAuthOutcome(configId, await call(configId));
   }
@@ -165,6 +181,16 @@ export function useClientConfigListUi(): ClientConfigListUi {
       setExpandedCards((prev) => toggleMember(prev, configId));
     },
     authState: (configId) => authStates[configId] ?? IDLE,
+    accessToken(configId) {
+      const response = tokenResponses[configId];
+      return response === undefined ? null : findAccessToken(response.body);
+    },
+    previousTokenResponse(configId) {
+      const response = tokenResponses[configId];
+      const state = authStates[configId] ?? IDLE;
+      const isCurrent = state.kind === "loading" || (state.kind === "done" && state.response === response);
+      return response === undefined || isCurrent ? null : response;
+    },
     metadataState: (configId) => metadataStates[configId] ?? IDLE,
     resourceState: (configId) => resourceStates[configId] ?? IDLE,
     probeState: (configId) => probeStates[configId] ?? IDLE,
@@ -176,7 +202,10 @@ export function useClientConfigListUi(): ClientConfigListUi {
     toggleParam(field, configId, paramName) {
       updateConfigAndSave(configId, (config) => ({ ...config, [field]: toggleDisabled(config[field], paramName) }));
     },
-    authorize: (configId) => runAuth(configId, api.authorizeClient),
+    authorize(configId) {
+      const opensBrowser = clientConfigs.find((config) => config.id === configId)?.grantType === "authorization_code";
+      return runAuth(configId, api.authorizeClient, opensBrowser ? { kind: "loading", label: WAITING_FOR_BROWSER } : { kind: "loading" });
+    },
     refreshToken: (configId) => runAuth(configId, api.refreshToken),
     cancelAuthorize(configId) {
       // The pending authorize call then fails with a cancellation error, which replaces this idle state.

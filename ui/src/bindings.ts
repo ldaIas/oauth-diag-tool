@@ -20,6 +20,7 @@ export const commands = {
 	deleteUser: (id: number) => typedError<null, string>(__TAURI_INVOKE("delete_user", { id })),
 	startServer: (id: number) => typedError<null, string>(__TAURI_INVOKE("start_server", { id })),
 	stopServer: (id: number) => typedError<null, string>(__TAURI_INVOKE("stop_server", { id })),
+	restartServer: (id: number) => typedError<null, string>(__TAURI_INVOKE("restart_server", { id })),
 	getCallbackUrl: () => __TAURI_INVOKE<string>("get_callback_url"),
 	authorizeClient: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("authorize_client", { id })),
 	refreshToken: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("refresh_token", { id })),
@@ -233,6 +234,10 @@ export type ServerConfig = {
 	port: number,
 	issuerUrl: string,
 	running: boolean,
+	/**  Running with settings that differ from the saved ones, which apply at the next start */
+	restartRequired: boolean,
+	/**  Running with the `/mcp` endpoint on; the saved `mcp_enabled` may not be applied yet */
+	mcpActive: boolean,
 	clients: OAuthClient[],
 	redirectUrlOverride: string,
 	accessTokenExpiry: number,

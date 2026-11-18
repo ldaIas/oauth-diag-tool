@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "vitest";
-import { initServerForm, recomputeUrls, setServerFormPort } from "./serverForm";
+import { initServerForm, recomputeUrls, setServerFormPort, validateServerForm } from "./serverForm";
 
 describe("initServerForm", () => {
   test("derives all URLs from the port", () => {
@@ -46,5 +46,12 @@ describe("setServerFormPort", () => {
   test("clamps out-of-range ports", () => {
     expect(setServerFormPort(initServerForm(9500), "0").port).toBe(1);
     expect(setServerFormPort(initServerForm(9500), "99999").port).toBe(65535);
+  });
+});
+
+describe("validateServerForm", () => {
+  test("requires a name that is not just spaces", () => {
+    expect(validateServerForm({ ...initServerForm(9500), name: "  " }).name).toBeDefined();
+    expect(validateServerForm({ ...initServerForm(9500), name: "Local" })).toEqual({});
   });
 });

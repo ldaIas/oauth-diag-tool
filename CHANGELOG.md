@@ -17,6 +17,7 @@
 - Add ⓘ help icons with hover text to server and client config fields, with the text kept in `ui/src/help/en.json` [PR](https://github.com/ldaIas/oauth-diag-tool/pull/24)
 - Add a landing page with OS-specific downloads and a manual Cloudflare Pages deploy workflow [PR](https://github.com/ldaIas/oauth-diag-tool/pull/25)
 - Add MCP authorization: discovery from resource and MCP URLs, CIMD and DCR client registration on both sides, and an optional MCP endpoint on servers [PR](https://github.com/ldaIas/oauth-diag-tool/pull/26)
+- Fix usability problems in server and client flows: working local client metadata defaults, restart-needed state, form validation, clearer stopped-server and restart errors, and delete confirmations [PR](https://github.com/ldaIas/oauth-diag-tool/pull/27)
 
 ## [0.0.6] -2026-04-22
 - Fix tauri updater to allow auto updates [PR](https://github.com/ldaIas/oauth-diag-tool/pull/15)

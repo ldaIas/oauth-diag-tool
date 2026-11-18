@@ -1,6 +1,7 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
+import { useState } from "react";
 import type { DiscoveryStep, ResourceKind } from "../bindings";
 import {
   activeDiscoverFrom,
@@ -10,6 +11,8 @@ import {
   toggleDiscoverFrom,
   toggleServerMetadata,
   updateAt,
+  validateClientConfigForm,
+  type ClientConfigFormErrors,
   type ClientConfigFormModel,
   type ExtraParamRow,
 } from "../lib/clientConfigForm";
@@ -36,6 +39,18 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
   const editing = model.editingId !== null;
   const discoverFrom = activeDiscoverFrom(model);
   const hasBothTargets = model.resourceUrl.trim() !== "" && model.mcpUrl.trim() !== "";
+  const [attempted, setAttempted] = useState(false);
+  const allErrors = validateClientConfigForm(model);
+  const hasErrors = Object.keys(allErrors).length > 0;
+  const errors: ClientConfigFormErrors = attempted ? allErrors : {};
+
+  function submit() {
+    if (hasErrors) {
+      setAttempted(true);
+    } else {
+      onSubmit(model);
+    }
+  }
 
   function discoverCheckbox(kind: ResourceKind, url: string) {
     return (
@@ -65,12 +80,13 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
           </div>
         )}
         {model.useServerMetadata && <DiscoveryTraceView trace={discoveryTrace} />}
-        <FormInput label="Name" value={model.name} placeholder="My Client Config" help="clientConfig.name" onChange={set("name")} />
+        <FormInput label="Name" value={model.name} placeholder="My Client Config" help="clientConfig.name" error={errors.name} onChange={set("name")} />
         <FormInput
           label="Resource URL (optional)"
           value={model.resourceUrl}
           placeholder="https://api.example.com/data"
           help="clientConfig.resourceUrl"
+          error={errors.resourceUrl}
           onChange={set("resourceUrl")}
         />
         {discoverCheckbox("resource", model.resourceUrl)}
@@ -79,6 +95,7 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
           value={model.mcpUrl}
           placeholder="https://mcp.example.com/mcp"
           help="clientConfig.mcpUrl"
+          error={errors.mcpUrl}
           onChange={set("mcpUrl")}
         />
         {discoverCheckbox("mcp", model.mcpUrl)}
@@ -103,6 +120,7 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
             value={model.issuerUrl}
             placeholder="https://auth.example.com"
             help="clientConfig.issuerUrl"
+            error={errors.issuerUrl}
             onChange={set("issuerUrl")}
           />
         )}
@@ -135,6 +153,7 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
             value={model.authorizationUrl}
             placeholder="https://auth.example.com/authorize"
             help="clientConfig.authorizationUrl"
+            error={errors.authorizationUrl}
             onChange={set("authorizationUrl")}
           />
         )}
@@ -146,10 +165,11 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
             value={model.tokenUrl}
             placeholder="https://auth.example.com/token"
             help="clientConfig.tokenUrl"
+            error={errors.tokenUrl}
             onChange={set("tokenUrl")}
           />
         )}
-        <RegistrationFields model={model} onChange={onChange} />
+        <RegistrationFields model={model} clientIdError={errors.clientId} onChange={onChange} />
         <FormInput label="Scopes" value={model.scopes} placeholder="openid profile email" help="clientConfig.scopes" onChange={set("scopes")} />
         <div className="form-field">
           <FieldLabel className="form-label" label="Grant Type" help="clientConfig.grantType" />
@@ -169,11 +189,12 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
           </div>
         )}
         <ExtraParams rows={model.extraParams} onChange={set("extraParams")} />
+        {attempted && hasErrors && <div className="form-error">Fix the marked fields to continue.</div>}
         <div className="form-actions">
           <button className="btn-cancel" onClick={onCancel}>
             Cancel
           </button>
-          <button className="btn-submit" onClick={() => onSubmit(model)}>
+          <button className="btn-submit" onClick={submit}>
             {editing ? "Save Config" : "Create Config"}
           </button>
         </div>

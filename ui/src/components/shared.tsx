@@ -27,7 +27,7 @@ export function CardToggle({
     <button type="button" className="card-toggle" aria-expanded={expanded} onClick={onToggle}>
       <span className="card-toggle-title">
         <span className="card-chevron">{chevron(expanded)}</span>
-        <span className="server-name">{name}</span>
+        <span className="server-name">{name.trim() === "" ? "(unnamed)" : name}</span>
         {!expanded && running && <span className="status-dot running" title="running" />}
       </span>
       {expanded && <span className="server-meta card-toggle-meta">{meta}</span>}
@@ -70,12 +70,14 @@ export function FormInput({
   value,
   placeholder,
   help,
+  error,
   onChange,
 }: {
   label: string;
   value: string;
   placeholder: string;
   help?: HelpKey;
+  error?: string | undefined;
   onChange: (value: string) => void;
 }) {
   return (
@@ -86,8 +88,10 @@ export function FormInput({
         type="text"
         value={value}
         placeholder={placeholder}
+        aria-invalid={error !== undefined}
         onChange={(e) => onChange(e.target.value)}
       />
+      {error !== undefined && <span className="form-error">{error}</span>}
     </div>
   );
 }

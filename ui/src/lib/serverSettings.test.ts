@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from "vitest";
 import type { ServerConfig } from "../bindings";
-import { parseIntOr, settingsEditFor, toServerSettings, type SettingsEdit } from "./serverSettings";
+import { parseIntOr, settingsChanged, settingsEditFor, toServerSettings, validateSettings, type SettingsEdit } from "./serverSettings";
 
 describe("parseIntOr", () => {
   test("parses whole integers, including signed ones", () => {
@@ -76,5 +76,37 @@ describe("settingsEditFor", () => {
       cimdAllowHttp: true,
       mcpEnabled: true,
     });
+  });
+});
+
+describe("validateSettings", () => {
+  test("accepts valid values, including a zero expiry and no override", () => {
+    expect(validateSettings({ ...edit, accessTokenExpiry: "0" })).toEqual({});
+    expect(validateSettings({ ...edit, redirectUrlOverride: "http://localhost:1/cb" })).toEqual({});
+  });
+
+  test("rejects blank, fractional, negative, and oversized expiries", () => {
+    for (const accessTokenExpiry of ["", "1.5", "-5", "315360001"]) {
+      expect(validateSettings({ ...edit, accessTokenExpiry }).accessTokenExpiry, accessTokenExpiry).toBeDefined();
+    }
+    expect(validateSettings({ ...edit, refreshTokenExpiry: "" }).refreshTokenExpiry).toBeDefined();
+  });
+
+  test("rejects a redirect override that is not an absolute http(s) URL", () => {
+    expect(validateSettings({ ...edit, redirectUrlOverride: "not a url" }).redirectUrlOverride).toBeDefined();
+  });
+});
+
+describe("settingsChanged", () => {
+  const server = { ...edit, accessTokenExpiry: 60, refreshTokenExpiry: 120 } as unknown as ServerConfig;
+
+  test("is false for the saved values and equivalent spellings", () => {
+    expect(settingsChanged(edit, server)).toBe(false);
+    expect(settingsChanged({ ...edit, accessTokenExpiry: "+60", redirectUrlOverride: "  " }, server)).toBe(false);
+  });
+
+  test("is true for any real difference, including an emptied expiry", () => {
+    expect(settingsChanged({ ...edit, mcpEnabled: false }, server)).toBe(true);
+    expect(settingsChanged({ ...edit, accessTokenExpiry: "" }, server)).toBe(true);
   });
 });
