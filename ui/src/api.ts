@@ -11,6 +11,7 @@ import {
   type MetadataOutcome,
   type VerifyOutcome,
 } from "./lib/authResult";
+import type { MetadataSource } from "./lib/clientConfigForm";
 import { toProbeOutcome, type ProbeOutcome } from "./lib/mcpProbe";
 import { parseClientConfig, toClientConfigInput } from "./lib/convert";
 import type { ServerSettings } from "./lib/serverSettings";
@@ -50,8 +51,7 @@ export interface Api {
   cancelAuthorization(id: number): Promise<boolean>;
   authorizeClient(id: number): Promise<AuthOutcome>;
   refreshToken(id: number): Promise<AuthOutcome>;
-  /** Starts discovery from `resourceUrl` when it is non-empty, otherwise from `issuerUrl`. */
-  fetchServerMetadata(issuerUrl: string, resourceUrl: string): Promise<MetadataOutcome>;
+  fetchServerMetadata(source: MetadataSource): Promise<MetadataOutcome>;
   /** GETs the config's resource URL with the access token. */
   callResource(id: number, accessToken: string): Promise<AuthOutcome>;
   /** Runs the MCP initialize / initialized / tools/list sequence against the config's resource URL. */
@@ -162,9 +162,9 @@ export function createApi(callbacks: ApiCallbacks): Api {
     async refreshToken(id) {
       return toAuthOutcome(await unreported("refresh_token", () => commands.refreshToken(id)));
     },
-    async fetchServerMetadata(issuerUrl, resourceUrl) {
+    async fetchServerMetadata({ issuerUrl, resourceUrl, resourceKind }) {
       try {
-        return toMetadataOutcome(await commands.fetchServerMetadata(issuerUrl, resourceUrl));
+        return toMetadataOutcome(await commands.fetchServerMetadata(issuerUrl, resourceUrl, resourceKind));
       } catch (err) {
         // IPC or serialization failures never reach the backend, so there is no trace to show.
         console.error("fetch_server_metadata failed:", err);

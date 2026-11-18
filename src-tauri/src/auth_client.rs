@@ -52,6 +52,10 @@ pub struct ClientConfig {
     pub registration_mode: RegistrationMode,
     pub token_auth_method: TokenAuthMethod,
     pub serve_client_metadata: bool,
+    /// Empty when the config has no MCP endpoint.
+    pub mcp_url: String,
+    /// With both URLs set, whether tokens are requested for the MCP URL.
+    pub token_for_mcp: bool,
 }
 
 /// Field payload shared by the create and update client-config commands.
@@ -77,6 +81,10 @@ pub struct ClientConfigInput {
     pub token_auth_method: TokenAuthMethod,
     /// In `cimd` mode, whether the callback listener serves this config's metadata document.
     pub serve_client_metadata: bool,
+    /// Empty when the config has no MCP endpoint.
+    pub mcp_url: String,
+    /// With both URLs set, whether tokens are requested for the MCP URL.
+    pub token_for_mcp: bool,
 }
 
 /// A client config resolved from the database with its JSON blobs parsed.
@@ -97,9 +105,23 @@ pub struct ResolvedClientConfig {
     pub registration_mode: RegistrationMode,
     pub token_auth_method: TokenAuthMethod,
     pub serve_client_metadata: bool,
+    /// Empty when the config has no MCP endpoint.
+    pub mcp_url: String,
+    /// With both URLs set, whether tokens are requested for the MCP URL.
+    pub token_for_mcp: bool,
 }
 
 impl ResolvedClientConfig {
+    /// The URL tokens are requested for. A token has one audience, so a config with both URLs
+    /// picks one; empty when it has neither.
+    pub fn token_resource(&self) -> &str {
+        if !self.mcp_url.is_empty() && (self.token_for_mcp || self.resource_url.is_empty()) {
+            &self.mcp_url
+        } else {
+            &self.resource_url
+        }
+    }
+
     pub fn credential_style(&self) -> CredentialStyle {
         client_registration::credential_style(self.registration_mode, self.token_auth_method)
     }
@@ -152,7 +174,7 @@ struct CallbackState {
 pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     log::info!("get_client_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, refresh_token, disabled_refresh_params, resource_url, registration_mode, token_auth_method, serve_client_metadata FROM oauth_client_configs")
+        .prepare("SELECT id, name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, refresh_token, disabled_refresh_params, resource_url, registration_mode, token_auth_method, serve_client_metadata, mcp_url, token_for_mcp FROM oauth_client_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -179,6 +201,8 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
                 registration_mode: RegistrationMode::from_db(&row.get::<_, String>(16)?),
                 token_auth_method: TokenAuthMethod::from_db(&row.get::<_, String>(17)?),
                 serve_client_metadata: row.get(18)?,
+                mcp_url: row.get(19)?,
+                token_for_mcp: row.get(20)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -188,25 +212,44 @@ pub fn get_all(conn: &Connection) -> Result<Vec<ClientConfig>, String> {
     Ok(configs)
 }
 
+/// The client ID of a config whose metadata document this app serves: the server fetches the
+/// document from the client ID, so no other value can work.
+fn local_client_id(id: i64, config: &ClientConfigInput) -> Option<String> {
+    (config.registration_mode == RegistrationMode::Cimd && config.serve_client_metadata)
+        .then(|| client_registration::local_document_url(id))
+}
+
 pub fn create(conn: &Connection, config: &ClientConfigInput) -> Result<(), String> {
     log::info!("create_client_config: name={}", config.name);
-    conn.execute(
-        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, disabled_refresh_params, resource_url, registration_mode, token_auth_method, serve_client_metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
-        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata],
+    let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+    tx.execute(
+        "INSERT INTO oauth_client_configs (name, issuer_url, authorization_url, token_url, client_id, client_secret, scopes, grant_type, extra_params, disabled_params, disabled_token_params, scopes_supported, disabled_refresh_params, resource_url, registration_mode, token_auth_method, serve_client_metadata, mcp_url, token_for_mcp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19)",
+        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp],
     )
     .map_err(|e| {
         log::error!("failed to insert client config: {}", e);
         e.to_string()
     })?;
+    // The local document URL contains the row id, so it can only be written after the insert.
+    if let Some(client_id) = local_client_id(tx.last_insert_rowid(), config) {
+        tx.execute(
+            "UPDATE oauth_client_configs SET client_id = ?1 WHERE id = ?2",
+            rusqlite::params![client_id, tx.last_insert_rowid()],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    tx.commit().map_err(|e| e.to_string())?;
     log::info!("client config inserted successfully");
     Ok(())
 }
 
 pub fn update(conn: &Connection, id: i64, config: &ClientConfigInput) -> Result<(), String> {
     log::info!("update_client_config: id={}", id);
+    let local_id = local_client_id(id, config);
+    let client_id = local_id.as_deref().unwrap_or(&config.client_id);
     conn.execute(
-        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12, disabled_refresh_params = ?13, resource_url = ?14, registration_mode = ?15, token_auth_method = ?16, serve_client_metadata = ?17 WHERE id = ?18",
-        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, config.client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, id],
+        "UPDATE oauth_client_configs SET name = ?1, issuer_url = ?2, authorization_url = ?3, token_url = ?4, client_id = ?5, client_secret = ?6, scopes = ?7, grant_type = ?8, extra_params = ?9, disabled_params = ?10, disabled_token_params = ?11, scopes_supported = ?12, disabled_refresh_params = ?13, resource_url = ?14, registration_mode = ?15, token_auth_method = ?16, serve_client_metadata = ?17, mcp_url = ?18, token_for_mcp = ?19 WHERE id = ?20",
+        rusqlite::params![config.name, config.issuer_url, config.authorization_url, config.token_url, client_id, config.client_secret, config.scopes, config.grant_type, config.extra_params, config.disabled_params, config.disabled_token_params, config.scopes_supported, config.disabled_refresh_params, config.resource_url, config.registration_mode.as_str(), config.token_auth_method.as_str(), config.serve_client_metadata, config.mcp_url, config.token_for_mcp, id],
     )
     .map_err(|e| {
         log::error!("failed to update client config: {}", e);
@@ -240,9 +283,9 @@ fn parse_disabled_set(json: &str) -> HashSet<String> {
 }
 
 pub fn lookup_config(conn: &Connection, id: i64) -> Result<ResolvedClientConfig, String> {
-    let (name, grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params_str, disabled_params_str, disabled_token_params_str, resource_url, registration_mode, token_auth_method, serve_client_metadata) = conn
+    let (name, grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params_str, disabled_params_str, disabled_token_params_str, resource_url, registration_mode, token_auth_method, serve_client_metadata, mcp_url, token_for_mcp) = conn
         .query_row(
-            "SELECT name, grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params, disabled_params, disabled_token_params, resource_url, registration_mode, token_auth_method, serve_client_metadata FROM oauth_client_configs WHERE id = ?1",
+            "SELECT name, grant_type, authorization_url, token_url, client_id, client_secret, scopes, extra_params, disabled_params, disabled_token_params, resource_url, registration_mode, token_auth_method, serve_client_metadata, mcp_url, token_for_mcp FROM oauth_client_configs WHERE id = ?1",
             rusqlite::params![id],
             |row| {
                 Ok((
@@ -260,6 +303,8 @@ pub fn lookup_config(conn: &Connection, id: i64) -> Result<ResolvedClientConfig,
                     row.get::<_, String>(11)?,
                     row.get::<_, String>(12)?,
                     row.get::<_, bool>(13)?,
+                    row.get::<_, String>(14)?,
+                    row.get::<_, bool>(15)?,
                 ))
             },
         )
@@ -287,10 +332,12 @@ pub fn lookup_config(conn: &Connection, id: i64) -> Result<ResolvedClientConfig,
         registration_mode: RegistrationMode::from_db(&registration_mode),
         token_auth_method: TokenAuthMethod::from_db(&token_auth_method),
         serve_client_metadata,
+        mcp_url,
+        token_for_mcp,
     })
 }
 
-/// The RFC 8707 `resource` value sent by default. None when the config has no resource URL,
+/// The RFC 8707 `resource` value sent by default. None when the config has no target URL,
 /// the user unchecked `resource`, or a `resource` extra param is sent in its place.
 fn default_resource_param(
     resource_url: &str,
@@ -302,12 +349,13 @@ fn default_resource_param(
 }
 
 /// The `resource` value for a refresh request. Refresh requests send no extra params, so
-/// an explicit `resource` extra param supplies the value here instead of the resource URL.
+/// an explicit `resource` extra param supplies the value here instead of the config's URL.
 pub fn refresh_resource_param(config: &ResolvedClientConfig, disabled: &HashSet<String>) -> Option<String> {
-    if config.resource_url.is_empty() || disabled.contains("resource") {
+    let resource = config.token_resource();
+    if resource.is_empty() || disabled.contains("resource") {
         return None;
     }
-    Some(config.extra_params.get("resource").cloned().unwrap_or_else(|| config.resource_url.clone()))
+    Some(config.extra_params.get("resource").cloned().unwrap_or_else(|| resource.to_string()))
 }
 
 pub async fn authorize_client_credentials(config: ResolvedClientConfig) -> Result<AuthResponse, String> {
@@ -320,10 +368,10 @@ pub async fn authorize_client_credentials(config: ResolvedClientConfig) -> Resul
     params.extend(credentials.body);
 
     if !config.scopes.is_empty() && !disabled.contains("scope") {
-        params.push(("scope".to_string(), config.scopes));
+        params.push(("scope".to_string(), config.scopes.clone()));
     }
 
-    if let Some(resource) = default_resource_param(&config.resource_url, &config.extra_params, disabled) {
+    if let Some(resource) = default_resource_param(config.token_resource(), &config.extra_params, disabled) {
         params.push(("resource".to_string(), resource));
     }
 
@@ -367,7 +415,7 @@ pub fn code_exchange_request(
     if !disabled.contains("code_verifier") {
         params.push(("code_verifier".to_string(), code_verifier.to_string()));
     }
-    if let Some(resource) = default_resource_param(&config.resource_url, &config.extra_params, disabled) {
+    if let Some(resource) = default_resource_param(config.token_resource(), &config.extra_params, disabled) {
         params.push(("resource".to_string(), resource));
     }
     for (k, v) in &config.extra_params {
@@ -433,7 +481,7 @@ pub async fn authorize_code_flow(
         if !disabled.contains("code_challenge_method") {
             query.append_pair("code_challenge_method", "S256");
         }
-        if let Some(resource) = default_resource_param(&config.resource_url, &config.extra_params, disabled) {
+        if let Some(resource) = default_resource_param(config.token_resource(), &config.extra_params, disabled) {
             query.append_pair("resource", &resource);
         }
         for (k, v) in &config.extra_params {
@@ -833,6 +881,8 @@ mod tests {
             registration_mode: RegistrationMode::Dcr,
             token_auth_method: TokenAuthMethod::ClientSecretBasic,
             serve_client_metadata: true,
+            mcp_url: "https://mcp.example.com/mcp-endpoint".to_string(),
+            token_for_mcp: true,
         }
     }
 
@@ -906,6 +956,8 @@ mod tests {
         assert_eq!(config.registration_mode, RegistrationMode::Dcr);
         assert_eq!(config.token_auth_method, TokenAuthMethod::ClientSecretBasic);
         assert!(config.serve_client_metadata);
+        assert_eq!(config.mcp_url, "https://mcp.example.com/mcp-endpoint");
+        assert!(config.token_for_mcp);
     }
 
     #[test]
@@ -920,6 +972,8 @@ mod tests {
         updated.resource_url = String::new();
         updated.registration_mode = RegistrationMode::Cimd;
         updated.serve_client_metadata = false;
+        updated.mcp_url = String::new();
+        updated.token_for_mcp = false;
         update(&conn, id, &updated).unwrap();
 
         let config = &get_all(&conn).unwrap()[0];
@@ -928,6 +982,33 @@ mod tests {
         assert_eq!(config.resource_url, "");
         assert_eq!(config.registration_mode, RegistrationMode::Cimd);
         assert!(!config.serve_client_metadata);
+        assert_eq!(config.mcp_url, "");
+        assert!(!config.token_for_mcp);
+    }
+
+    #[test]
+    fn a_locally_served_cimd_config_gets_its_document_url_as_client_id() {
+        let conn = crate::db::open_test_connection();
+        let mut input = sample_input();
+        input.registration_mode = RegistrationMode::Cimd;
+        create(&conn, &input).unwrap();
+        let id = only_id(&conn);
+        assert_eq!(get_all(&conn).unwrap()[0].client_id, client_registration::local_document_url(id));
+
+        input.client_id = "typed-over".to_string();
+        update(&conn, id, &input).unwrap();
+        assert_eq!(get_all(&conn).unwrap()[0].client_id, client_registration::local_document_url(id));
+    }
+
+    #[test]
+    fn a_cimd_config_hosted_elsewhere_keeps_its_client_id() {
+        let conn = crate::db::open_test_connection();
+        let mut input = sample_input();
+        input.registration_mode = RegistrationMode::Cimd;
+        input.serve_client_metadata = false;
+        input.client_id = "https://client.example.com/meta.json".to_string();
+        create(&conn, &input).unwrap();
+        assert_eq!(get_all(&conn).unwrap()[0].client_id, "https://client.example.com/meta.json");
     }
 
     #[test]
@@ -1055,7 +1136,25 @@ mod tests {
             registration_mode: RegistrationMode::Preregistered,
             token_auth_method: TokenAuthMethod::None,
             serve_client_metadata: false,
+            mcp_url: String::new(),
+            token_for_mcp: false,
         }
+    }
+
+    #[test]
+    fn tokens_target_the_only_url_or_the_chosen_one() {
+        let mut config = resolved("https://r.test/data", HashMap::new());
+        assert_eq!(config.token_resource(), "https://r.test/data");
+        config.mcp_url = "https://r.test/mcp".to_string();
+        assert_eq!(config.token_resource(), "https://r.test/data");
+        config.token_for_mcp = true;
+        assert_eq!(config.token_resource(), "https://r.test/mcp");
+        config.token_for_mcp = false;
+        config.resource_url = String::new();
+        assert_eq!(config.token_resource(), "https://r.test/mcp");
+        config.mcp_url = String::new();
+        config.token_for_mcp = true;
+        assert_eq!(config.token_resource(), "");
     }
 
     #[test]

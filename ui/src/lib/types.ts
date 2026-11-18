@@ -20,6 +20,10 @@ export interface ClientConfigFields {
   disabledRefreshParams: Record<string, boolean>;
   /** Empty means the config has no protected resource. */
   resourceUrl: string;
+  /** Empty means the config has no MCP endpoint. */
+  mcpUrl: string;
+  /** With both URLs set, whether tokens are requested for the MCP URL. */
+  tokenForMcp: boolean;
   registrationMode: RegistrationMode;
   /** The method a DCR client registered with; only `dcr` mode reads it. */
   tokenAuthMethod: TokenAuthMethod;

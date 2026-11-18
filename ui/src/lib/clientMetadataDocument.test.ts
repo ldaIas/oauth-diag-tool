@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "vitest";
-import { clientMetadataDocument, formatClientMetadataDocument, localClientMetadataUrl } from "./clientMetadataDocument";
+import { clientIdUrlWarnings, clientMetadataDocument, formatClientMetadataDocument, localClientMetadataUrl } from "./clientMetadataDocument";
 import fixtures from "./clientMetadataDocument.fixtures.json";
 
 describe("clientMetadataDocument", () => {
@@ -39,5 +39,30 @@ describe("localClientMetadataUrl", () => {
   test("is null for a missing or portless callback URL", () => {
     expect(localClientMetadataUrl("", 1)).toBeNull();
     expect(localClientMetadataUrl("http://localhost/callback", 1)).toBeNull();
+  });
+});
+
+describe("clientIdUrlWarnings", () => {
+  test("accepts an https document URL", () => {
+    expect(clientIdUrlWarnings("https://c.test/meta.json")).toEqual([]);
+  });
+
+  test("says nothing about an empty client ID", () => {
+    expect(clientIdUrlWarnings("  ")).toEqual([]);
+  });
+
+  test("flags a plain client ID, which a server resolves as a registered client", () => {
+    const warnings = clientIdUrlWarnings("8QSfvcMllDX9XBZzwvmIjP17");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("must be the URL");
+  });
+
+  test("flags a URL without a path and a non-loopback http URL", () => {
+    expect(clientIdUrlWarnings("https://c.test/")[0]).toContain("path");
+    expect(clientIdUrlWarnings("http://c.test/m")[0]).toContain("must use https");
+  });
+
+  test("notes that a loopback http URL needs the server to allow it", () => {
+    expect(clientIdUrlWarnings("http://127.0.0.1:5757/client-metadata/7")).toEqual([expect.stringContaining("Allow http client ID URLs")]);
   });
 });

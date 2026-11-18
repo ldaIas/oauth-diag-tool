@@ -215,10 +215,10 @@ fn unauthorized_hint(www_authenticate: &[String]) -> String {
     hint
 }
 
-pub async fn probe(resource_url: &str, access_token: &str) -> Result<ProbeReport, String> {
-    let url = resource_url.trim();
+pub async fn probe(mcp_url: &str, access_token: &str) -> Result<ProbeReport, String> {
+    let url = mcp_url.trim();
     if url.is_empty() {
-        return Err("This configuration has no resource URL".to_string());
+        return Err("This configuration has no MCP URL".to_string());
     }
     let client = reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build().map_err(|e| e.to_string())?;
     let mut probe = Probe {

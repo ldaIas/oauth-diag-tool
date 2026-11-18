@@ -4,8 +4,16 @@
 import { useRef, useState } from "react";
 import type { RegistrationMode, TokenAuthMethod } from "../bindings";
 import type { AuthState } from "../hooks/useClientConfigListUi";
-import { applyRegistration, formCredentialStyle, canRegister, type ClientConfigFormModel } from "../lib/clientConfigForm";
-import { localClientMetadataUrl } from "../lib/clientMetadataDocument";
+import {
+  applyRegistration,
+  canRegister,
+  cimdClientId,
+  formCredentialStyle,
+  toggleServeLocally,
+  withRegistrationMode,
+  type ClientConfigFormModel,
+} from "../lib/clientConfigForm";
+import { clientIdUrlWarnings, localClientMetadataUrl } from "../lib/clientMetadataDocument";
 import { advertisedMethods, interpretRegistration, registrationWarnings, sendsClientSecret } from "../lib/registration";
 import { helpText } from "../lib/help";
 import { useAppState } from "../state";
@@ -47,6 +55,8 @@ export function RegistrationFields({ model, onChange }: RegistrationFieldsProps)
   const advertised = support === null ? [] : advertisedMethods(support);
   const warnings = registrationWarnings(model.registrationMode, model.tokenAuthMethod, support);
   const localUrl = model.editingId === null ? null : localClientMetadataUrl(callbackUrl, model.editingId);
+  const documentClientId = cimdClientId(model, localUrl);
+  const clientIdWarnings = clientIdUrlWarnings(documentClientId);
 
   async function register() {
     if (support === null) {
@@ -72,7 +82,7 @@ export function RegistrationFields({ model, onChange }: RegistrationFieldsProps)
         <select
           className="form-input form-select"
           value={model.registrationMode}
-          onChange={(e) => onChange({ ...model, registrationMode: MODES.find((mode) => mode === e.target.value) ?? "preregistered" })}
+          onChange={(e) => onChange(withRegistrationMode(model, MODES.find((mode) => mode === e.target.value) ?? "preregistered", localUrl))}
         >
           {MODES.map((mode) => (
             <option key={mode} value={mode}>
@@ -97,39 +107,45 @@ export function RegistrationFields({ model, onChange }: RegistrationFieldsProps)
       </div>
       {model.registrationMode === "cimd" && (
         <>
-          <FormInput
-            label="Client ID (metadata document URL)"
-            value={model.clientId}
-            placeholder="https://client.example.com/oauth/metadata.json"
-            help="clientConfig.clientIdUrl"
-            onChange={(clientId) => onChange({ ...model, clientId })}
-          />
           <div className="form-field form-field-checkbox">
             <label className="param-toggle">
-              <input
-                type="checkbox"
-                checked={model.serveClientMetadata}
-                onChange={() => onChange({ ...model, serveClientMetadata: !model.serveClientMetadata })}
-              />
+              <input type="checkbox" checked={model.serveClientMetadata} onChange={() => onChange(toggleServeLocally(model, localUrl))} />
               <span className="param-toggle-name">Serve document locally</span>
               <HelpTip text={helpText("clientConfig.serveClientMetadata")} />
             </label>
-            <span>
-              <button
-                type="button"
-                className="btn-import"
-                disabled={localUrl === null}
-                title={localUrl === null ? "Save the configuration first; the URL contains its id" : undefined}
-                onClick={() => localUrl !== null && onChange({ ...model, clientId: localUrl })}
-              >
-                Use local URL
-              </button>
-              <HelpTip text={helpText("clientConfig.useLocalUrl")} />
-            </span>
           </div>
-          {model.clientId.trim() !== "" && callbackUrl !== "" && (
+          {model.serveClientMetadata ? (
+            <div className="form-field">
+              <FieldLabel className="form-label" label="Client ID (metadata document URL)" help="clientConfig.clientIdUrl" />
+              <input
+                className="form-input form-input-readonly"
+                type="text"
+                value={localUrl ?? ""}
+                placeholder="Filled in when you save"
+                disabled
+              />
+            </div>
+          ) : (
+            <FormInput
+              label="Client ID (metadata document URL)"
+              value={model.clientId}
+              placeholder="https://client.example.com/oauth/metadata.json"
+              help="clientConfig.clientIdUrl"
+              onChange={(clientId) => onChange({ ...model, clientId })}
+            />
+          )}
+          {clientIdWarnings.length > 0 && (
+            <div className="form-field">
+              {clientIdWarnings.map((warning) => (
+                <span className="registration-warning" key={warning}>
+                  {warning}
+                </span>
+              ))}
+            </div>
+          )}
+          {documentClientId.trim() !== "" && callbackUrl !== "" && (
             <ClientMetadataDocumentView
-              subject={{ clientId: model.clientId, name: model.name, redirectUri: callbackUrl, scopes: model.scopes }}
+              subject={{ clientId: documentClientId, name: model.name, redirectUri: callbackUrl, scopes: model.scopes }}
             />
           )}
         </>

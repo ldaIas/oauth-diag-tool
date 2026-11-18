@@ -292,8 +292,9 @@ fn cancel_authorization(
 async fn fetch_server_metadata(
     issuer_url: String,
     resource_url: String,
+    resource_kind: discovery::ResourceKind,
 ) -> Result<discovery::ServerMetadataResponse, discovery::DiscoveryFailure> {
-    discovery::discover(&resource_url, &issuer_url).await
+    discovery::discover(&resource_url, resource_kind, &issuer_url).await
 }
 
 #[tauri::command]
@@ -319,11 +320,11 @@ async fn probe_mcp(
     access_token: String,
 ) -> Result<mcp_probe::ProbeReport, String> {
     log::info!("probe_mcp called: id={}", id);
-    let resource_url = {
+    let mcp_url = {
         let conn = state.lock().map_err(|e| e.to_string())?;
-        auth_client::lookup_config(&conn, id)?.resource_url
+        auth_client::lookup_config(&conn, id)?.mcp_url
     };
-    mcp_probe::probe(&resource_url, &access_token).await
+    mcp_probe::probe(&mcp_url, &access_token).await
 }
 
 #[tauri::command]

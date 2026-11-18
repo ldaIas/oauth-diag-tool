@@ -4,7 +4,7 @@
 import { useState } from "react";
 import type { AuthResponse, CheckResult, DiscoveryStep, ProbeReport, ServerMetadataResponse } from "../bindings";
 import { extractRefreshToken, type AuthOutcome } from "../lib/authResult";
-import { mergeMetadata } from "../lib/clientConfigForm";
+import { mergeMetadata, type MetadataSource } from "../lib/clientConfigForm";
 import { toggleDisabled, toggleMember, withMember } from "../lib/collections";
 import type { ParsedClientConfig } from "../lib/types";
 import { useAppState } from "../state";
@@ -74,7 +74,7 @@ export interface ClientConfigListUi {
   authorize(configId: number): Promise<void>;
   refreshToken(configId: number): Promise<void>;
   cancelAuthorize(configId: number): void;
-  fetchMetadata(configId: number, issuerUrl: string, resourceUrl: string): Promise<void>;
+  fetchMetadata(configId: number, source: MetadataSource): Promise<void>;
   callResource(configId: number, accessToken: string): Promise<void>;
   probeMcp(configId: number, accessToken: string): Promise<void>;
   verifyDocument(configId: number): Promise<void>;
@@ -183,10 +183,10 @@ export function useClientConfigListUi(): ClientConfigListUi {
       setAuthState(configId, IDLE);
       void api.cancelAuthorization(configId);
     },
-    async fetchMetadata(configId, issuerUrl, resourceUrl) {
+    async fetchMetadata(configId, source) {
       setMetadataState(configId, { kind: "loading" });
       expand("metadata", configId);
-      const outcome = await api.fetchServerMetadata(issuerUrl, resourceUrl);
+      const outcome = await api.fetchServerMetadata(source);
       if (outcome.kind === "failure") {
         setMetadataState(configId, { kind: "error", error: outcome.error, trace: outcome.trace });
         return;

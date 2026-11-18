@@ -6,16 +6,25 @@ import {
   applyMetadata,
   applyRegistration,
   canFetchMetadata,
+  activeDiscoverFrom,
   canRegister,
+  cimdClientId,
   formCredentialStyle,
   initClientConfigForm,
   initFromEdit,
   initFromImport,
   mergeMetadata,
+  metadataSource,
+  metadataSourceFor,
   needsMetadataFetch,
   removeAt,
   toConfigInput,
+  toggleDiscoverFrom,
+  toggleServeLocally,
+  toggleServerMetadata,
+  tokenResourceUrl,
   updateAt,
+  withRegistrationMode,
 } from "./clientConfigForm";
 import type { ParsedClientConfig } from "./types";
 
@@ -36,6 +45,8 @@ const sampleConfig: ParsedClientConfig = {
   refreshToken: "rt-12345",
   disabledRefreshParams: { scope: true },
   resourceUrl: "https://mcp.example.com/mcp",
+  mcpUrl: "https://mcp.example.com/endpoint",
+  tokenForMcp: true,
   registrationMode: "dcr",
   tokenAuthMethod: "client_secret_post",
   serveClientMetadata: true,
@@ -59,6 +70,8 @@ describe("ClientConfigForm", () => {
         scopesSupported: sampleConfig.scopesSupported,
         disabledRefreshParams: sampleConfig.disabledRefreshParams,
         resourceUrl: sampleConfig.resourceUrl,
+        mcpUrl: sampleConfig.mcpUrl,
+        tokenForMcp: sampleConfig.tokenForMcp,
         registrationMode: sampleConfig.registrationMode,
         tokenAuthMethod: sampleConfig.tokenAuthMethod,
         serveClientMetadata: sampleConfig.serveClientMetadata,
@@ -162,7 +175,7 @@ describe("metadata pull", () => {
       authorizationUrl: "http://issuer/authorize",
       tokenUrl: "http://issuer/token",
       scopesSupported: "openid",
-      pulledFrom: { issuerUrl: "http://issuer", resourceUrl: "" },
+      pulledFrom: { issuerUrl: "http://issuer", resourceUrl: "", resourceKind: "resource" },
     });
   });
 
@@ -197,9 +210,49 @@ describe("metadata pull", () => {
   });
 
   test("canFetchMetadata needs a resource URL or an issuer URL", () => {
-    expect(canFetchMetadata({ issuerUrl: " ", resourceUrl: "" })).toBe(false);
-    expect(canFetchMetadata({ issuerUrl: "http://issuer", resourceUrl: "" })).toBe(true);
-    expect(canFetchMetadata({ issuerUrl: "", resourceUrl: "http://issuer/mcp" })).toBe(true);
+    expect(canFetchMetadata({ issuerUrl: " ", resourceUrl: "", resourceKind: "resource" })).toBe(false);
+    expect(canFetchMetadata({ issuerUrl: "http://issuer", resourceUrl: "", resourceKind: "resource" })).toBe(true);
+    expect(canFetchMetadata({ issuerUrl: "", resourceUrl: "http://issuer/mcp", resourceKind: "mcp" })).toBe(true);
+  });
+
+  describe("where discovery starts", () => {
+    const urls = { issuerUrl: "http://issuer", resourceUrl: " http://r/data ", mcpUrl: "http://r/mcp" };
+
+    test("prefers the chosen URL, then the resource, the MCP URL and the issuer", () => {
+      expect(metadataSourceFor(urls, "mcp")).toEqual({ issuerUrl: "http://issuer", resourceUrl: "http://r/mcp", resourceKind: "mcp" });
+      expect(metadataSourceFor(urls, null)).toMatchObject({ resourceUrl: "http://r/data", resourceKind: "resource" });
+      expect(metadataSourceFor({ ...urls, resourceUrl: "" }, "resource")).toMatchObject({ resourceUrl: "http://r/mcp", resourceKind: "mcp" });
+      expect(metadataSourceFor({ ...urls, resourceUrl: "", mcpUrl: "" }, null)).toMatchObject({ resourceUrl: "" });
+    });
+
+    test("ticking a URL turns on server metadata and unticking turns it off", () => {
+      const start = { ...initClientConfigForm(), resourceUrl: "http://r/data", mcpUrl: "http://r/mcp" };
+      const fromMcp = toggleDiscoverFrom(start, "mcp");
+      expect(fromMcp).toMatchObject({ discoverFrom: "mcp", useServerMetadata: true });
+      expect(metadataSource(fromMcp).resourceKind).toBe("mcp");
+      expect(toggleDiscoverFrom(fromMcp, "resource").discoverFrom).toBe("resource");
+      expect(toggleDiscoverFrom(fromMcp, "mcp")).toMatchObject({ discoverFrom: null, useServerMetadata: false });
+    });
+
+    test("a discovery choice counts only while its URL is filled in and metadata is on", () => {
+      const fromResource = toggleDiscoverFrom({ ...initClientConfigForm(), resourceUrl: "http://r/data" }, "resource");
+      expect(activeDiscoverFrom(fromResource)).toBe("resource");
+      expect(activeDiscoverFrom({ ...fromResource, resourceUrl: " " })).toBeNull();
+      expect(toggleServerMetadata(fromResource)).toMatchObject({ discoverFrom: null, useServerMetadata: false });
+    });
+
+    test("changing the starting URL needs a new fetch", () => {
+      const start = { ...form, issuerUrl: "", resourceUrl: "http://r/data", mcpUrl: "http://r/mcp" };
+      expect(needsMetadataFetch(toggleDiscoverFrom(applyMetadata(start, metadata), "mcp"))).toBe(true);
+    });
+  });
+
+  test("tokens target the only URL, or the chosen one when both are set", () => {
+    const both = { resourceUrl: "http://r/data", mcpUrl: "http://r/mcp", tokenForMcp: false };
+    expect(tokenResourceUrl(both)).toBe("http://r/data");
+    expect(tokenResourceUrl({ ...both, tokenForMcp: true })).toBe("http://r/mcp");
+    expect(tokenResourceUrl({ ...both, resourceUrl: "" })).toBe("http://r/mcp");
+    expect(tokenResourceUrl({ ...both, mcpUrl: "", tokenForMcp: true })).toBe("http://r/data");
   });
 
   test("applyMetadata records what the server advertises for registration", () => {
@@ -226,6 +279,34 @@ describe("registration", () => {
     expect(base.registrationMode).toBe("preregistered");
     expect(base.tokenAuthMethod).toBe("none");
     expect(base.serveClientMetadata).toBe(false);
+  });
+
+  describe("CIMD client ID", () => {
+    const local = "http://127.0.0.1:5757/client-metadata/7";
+
+    test("choosing CIMD turns on local serving and keeps a typed ID for later", () => {
+      const form = withRegistrationMode({ ...base, clientId: "typed" }, "cimd", null);
+      expect(form).toMatchObject({ registrationMode: "cimd", serveClientMetadata: true, clientId: "typed" });
+      expect(cimdClientId(form, null)).toBe("");
+      expect(cimdClientId(form, local)).toBe(local);
+    });
+
+    test("leaving CIMD drops the local URL and local serving", () => {
+      const form = { ...base, registrationMode: "cimd" as const, serveClientMetadata: true, clientId: local };
+      expect(withRegistrationMode(form, "dcr", local)).toMatchObject({ serveClientMetadata: false, clientId: "" });
+    });
+
+    test("reselecting the current mode changes nothing", () => {
+      const form = { ...base, registrationMode: "cimd" as const, serveClientMetadata: false, clientId: "https://c.test/m" };
+      expect(withRegistrationMode(form, "cimd", local)).toBe(form);
+    });
+
+    test("turning local serving off clears only the local URL", () => {
+      const serving = { ...base, registrationMode: "cimd" as const, serveClientMetadata: true };
+      expect(toggleServeLocally({ ...serving, clientId: local }, local)).toMatchObject({ serveClientMetadata: false, clientId: "" });
+      const hosted = toggleServeLocally({ ...serving, clientId: "https://c.test/m" }, local);
+      expect(cimdClientId(hosted, local)).toBe("https://c.test/m");
+    });
   });
 
   test("the credential style follows the mode and method", () => {

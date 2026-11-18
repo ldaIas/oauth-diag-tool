@@ -4,6 +4,7 @@
 import type { ClientConfigListUi, DisabledParamsField, ExpandableSection } from "../hooks/useClientConfigListUi";
 import { helpText } from "../lib/help";
 import { findAccessToken } from "../lib/accessToken";
+import { metadataSourceFor, tokenResourceUrl } from "../lib/clientConfigForm";
 import { sectionParams, sortedEntries } from "../lib/params";
 import { credentialStyle, refreshParamNames, sendParamNames, sendsClientSecret, tokenParamNames } from "../lib/registration";
 import { matchesSearch } from "../lib/search";
@@ -26,7 +27,7 @@ interface ClientConfigListProps {
 export function ClientConfigList({ ui, onOpenCreateForm, onEditConfig }: ClientConfigListProps) {
   const { clientConfigs } = useAppState();
   const visible = clientConfigs.filter((config) =>
-    matchesSearch(ui.search, [config.name, config.grantType, config.clientId, config.issuerUrl, config.resourceUrl]),
+    matchesSearch(ui.search, [config.name, config.grantType, config.clientId, config.issuerUrl, config.resourceUrl, config.mcpUrl]),
   );
   return (
     <div className="page-content">
@@ -83,6 +84,8 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
   const probeState = ui.probeState(config.id);
   const probeExpanded = ui.isExpanded("probe", config.id);
   const hasResource = config.resourceUrl !== "";
+  const hasMcp = config.mcpUrl !== "";
+  const tokenResource = tokenResourceUrl(config);
   const style = credentialStyle(config.registrationMode, config.tokenAuthMethod);
   const isCimd = config.registrationMode === "cimd";
   const verifyState = ui.verifyState(config.id);
@@ -91,7 +94,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
   const accessToken = state.kind === "done" ? findAccessToken(state.response.body) : null;
 
   function paramNames(standard: readonly string[]) {
-    return sectionParams(standard, config.resourceUrl, extraKeys);
+    return sectionParams(standard, tokenResource, extraKeys);
   }
 
   function section(
@@ -154,7 +157,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
               <HelpTip text={helpText("clientConfig.callResource")} />
             </span>
           )}
-          {hasResource && accessToken !== null && (
+          {hasMcp && accessToken !== null && (
             <span>
               <button
                 className="btn-server-control btn-authorize"
@@ -176,6 +179,8 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
       </div>
       <div className="server-card-details">
         {hasResource && <Detail label="Resource" value={config.resourceUrl} help="clientConfig.resourceUrl" />}
+        {hasMcp && <Detail label="MCP" value={config.mcpUrl} help="clientConfig.mcpUrl" />}
+        {hasResource && hasMcp && <Detail label="Tokens For" value={tokenResource} help="clientConfig.tokenForMcp" />}
         <Detail label="Issuer" value={config.issuerUrl} help="clientConfig.issuerUrl" />
         <Detail label="Authorization" value={config.authorizationUrl} help="clientConfig.authorizationUrl" />
         <Detail label="Token" value={config.tokenUrl} help="clientConfig.tokenUrl" />
@@ -205,7 +210,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
         section("Send Parameters", helpText("paramSection.send"), "params", "disabledParams", paramNames(sendParamNames(style)))
       )}
       {config.refreshToken !== "" &&
-        section("Refresh Token Parameters", helpText("paramSection.refresh"), "refreshParams", "disabledRefreshParams", sectionParams(refreshParamNames(style), config.resourceUrl, []))}
+        section("Refresh Token Parameters", helpText("paramSection.refresh"), "refreshParams", "disabledRefreshParams", sectionParams(refreshParamNames(style), tokenResource, []))}
       {isCimd && (
         <>
           <div className="param-toggles">
@@ -256,7 +261,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
           <div className="metadata-section-content">
             <button
               className="btn-server-control btn-authorize"
-              onClick={() => void ui.fetchMetadata(config.id, config.issuerUrl, config.resourceUrl)}
+              onClick={() => void ui.fetchMetadata(config.id, metadataSourceFor(config, null))}
             >
               Refresh Metadata
             </button>

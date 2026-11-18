@@ -1,8 +1,18 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { DiscoveryStep } from "../bindings";
-import { canFetchMetadata, metadataSource, removeAt, updateAt, type ClientConfigFormModel, type ExtraParamRow } from "../lib/clientConfigForm";
+import type { DiscoveryStep, ResourceKind } from "../bindings";
+import {
+  activeDiscoverFrom,
+  canFetchMetadata,
+  metadataSource,
+  removeAt,
+  toggleDiscoverFrom,
+  toggleServerMetadata,
+  updateAt,
+  type ClientConfigFormModel,
+  type ExtraParamRow,
+} from "../lib/clientConfigForm";
 import { helpText, type HelpKey } from "../lib/help";
 import { useAppState } from "../state";
 import { DiscoveryTraceView } from "./AuthResults";
@@ -24,6 +34,22 @@ interface ClientConfigFormProps {
 export function ClientConfigForm({ model, metadataError, discoveryTrace, pullingMetadata, onPullMetadata, onChange, onSubmit, onCancel }: ClientConfigFormProps) {
   const { callbackUrl } = useAppState();
   const editing = model.editingId !== null;
+  const discoverFrom = activeDiscoverFrom(model);
+  const hasBothTargets = model.resourceUrl.trim() !== "" && model.mcpUrl.trim() !== "";
+
+  function discoverCheckbox(kind: ResourceKind, url: string) {
+    return (
+      url.trim() !== "" && (
+        <div className="form-field form-field-checkbox">
+          <label className="param-toggle">
+            <input type="checkbox" checked={discoverFrom === kind} onChange={() => onChange(toggleDiscoverFrom(model, kind))} />
+            <span className="param-toggle-name">Discover OAuth from this URL</span>
+            <HelpTip text={helpText(kind === "mcp" ? "clientConfig.discoverFromMcp" : "clientConfig.discoverFromResource")} />
+          </label>
+        </div>
+      )
+    );
+  }
 
   function set<K extends keyof ClientConfigFormModel>(key: K) {
     return (value: ClientConfigFormModel[K]) => onChange({ ...model, [key]: value });
@@ -43,23 +69,49 @@ export function ClientConfigForm({ model, metadataError, discoveryTrace, pulling
         <FormInput
           label="Resource URL (optional)"
           value={model.resourceUrl}
-          placeholder="https://mcp.example.com/mcp"
+          placeholder="https://api.example.com/data"
           help="clientConfig.resourceUrl"
           onChange={set("resourceUrl")}
         />
+        {discoverCheckbox("resource", model.resourceUrl)}
         <FormInput
-          label="Issuer URL"
-          value={model.issuerUrl}
-          placeholder="https://auth.example.com"
-          help="clientConfig.issuerUrl"
-          onChange={set("issuerUrl")}
+          label="MCP URL (optional)"
+          value={model.mcpUrl}
+          placeholder="https://mcp.example.com/mcp"
+          help="clientConfig.mcpUrl"
+          onChange={set("mcpUrl")}
         />
+        {discoverCheckbox("mcp", model.mcpUrl)}
+        {hasBothTargets && (
+          <div className="form-field">
+            <FieldLabel className="form-label" label="Request Tokens For" help="clientConfig.tokenForMcp" />
+            <select
+              className="form-input form-select"
+              value={model.tokenForMcp ? "mcp" : "resource"}
+              onChange={(e) => onChange({ ...model, tokenForMcp: e.target.value === "mcp" })}
+            >
+              <option value="resource">Resource URL</option>
+              <option value="mcp">MCP URL</option>
+            </select>
+          </div>
+        )}
+        {discoverFrom !== null ? (
+          <DisabledInput label="Issuer URL" value={model.issuerUrl} help="clientConfig.issuerUrl" />
+        ) : (
+          <FormInput
+            label="Issuer URL"
+            value={model.issuerUrl}
+            placeholder="https://auth.example.com"
+            help="clientConfig.issuerUrl"
+            onChange={set("issuerUrl")}
+          />
+        )}
         <div className="form-field form-field-checkbox">
           <label className="param-toggle">
             <input
               type="checkbox"
               checked={model.useServerMetadata}
-              onChange={() => onChange({ ...model, useServerMetadata: !model.useServerMetadata })}
+              onChange={() => onChange(toggleServerMetadata(model))}
             />
             <span className="param-toggle-name">Use Authorization Server Metadata</span>
             <HelpTip text={helpText("clientConfig.useServerMetadata")} />

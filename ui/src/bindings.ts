@@ -24,7 +24,7 @@ export const commands = {
 	authorizeClient: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("authorize_client", { id })),
 	refreshToken: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("refresh_token", { id })),
 	cancelAuthorization: (id: number) => typedError<null, string>(__TAURI_INVOKE("cancel_authorization", { id })),
-	fetchServerMetadata: (issuerUrl: string, resourceUrl: string) => typedError<ServerMetadataResponse, DiscoveryFailure>(__TAURI_INVOKE("fetch_server_metadata", { issuerUrl, resourceUrl })),
+	fetchServerMetadata: (issuerUrl: string, resourceUrl: string, resourceKind: ResourceKind) => typedError<ServerMetadataResponse, DiscoveryFailure>(__TAURI_INVOKE("fetch_server_metadata", { issuerUrl, resourceUrl, resourceKind })),
 	callResource: (id: number, accessToken: string) => typedError<AuthResponse, string>(__TAURI_INVOKE("call_resource", { id, accessToken })),
 	probeMcp: (id: number, accessToken: string) => typedError<ProbeReport, string>(__TAURI_INVOKE("probe_mcp", { id, accessToken })),
 	registerClient: (registrationEndpoint: string, clientName: string, scopes: string, tokenAuthMethod: TokenAuthMethod) => typedError<AuthResponse, string>(__TAURI_INVOKE("register_client", { registrationEndpoint, clientName, scopes, tokenAuthMethod })),
@@ -71,6 +71,10 @@ export type ClientConfig = {
 	registrationMode: RegistrationMode,
 	tokenAuthMethod: TokenAuthMethod,
 	serveClientMetadata: boolean,
+	/**  Empty when the config has no MCP endpoint. */
+	mcpUrl: string,
+	/**  With both URLs set, whether tokens are requested for the MCP URL. */
+	tokenForMcp: boolean,
 };
 
 /**  Field payload shared by the create and update client-config commands. */
@@ -94,6 +98,10 @@ export type ClientConfigInput = {
 	tokenAuthMethod: TokenAuthMethod,
 	/**  In `cimd` mode, whether the callback listener serves this config's metadata document. */
 	serveClientMetadata: boolean,
+	/**  Empty when the config has no MCP endpoint. */
+	mcpUrl: string,
+	/**  With both URLs set, whether tokens are requested for the MCP URL. */
+	tokenForMcp: boolean,
 };
 
 /**  Emitted each time a client metadata document is fetched (cache hits do not emit). */
@@ -207,6 +215,9 @@ export type ResourceAccessInfo_Serialize = {
 	/**  The protected resource path that was requested, e.g. `/resource` or `/mcp` */
 	path: string,
 };
+
+/**  What kind of endpoint discovery starts from, which decides how it is probed. */
+export type ResourceKind = "resource" | "mcp";
 
 /**  Emitted when a client registers through `/register` so the UI can reload its client list. */
 export type ServerClientsChanged = {

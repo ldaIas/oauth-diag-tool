@@ -1245,26 +1245,37 @@ async fn authenticate_client(
     let (client_id, client_secret) = extract_client_credentials(headers, params)
         .ok_or_else(|| invalid_client("Client credentials not provided"))?;
 
-    if let ClientIdKind::MetadataDocument(url) = cimd::classify_client_id(&client_id, state.cimd_allow_http) {
-        if !state.cimd_enabled {
-            return Err(invalid_client(disabled_cimd_message()));
+    let ineligible_reason = match cimd::classify_client_id(&client_id, state.cimd_allow_http) {
+        ClientIdKind::MetadataDocument(url) => {
+            if !state.cimd_enabled {
+                return Err(invalid_client(disabled_cimd_message()));
+            }
+            load_client_metadata(state, &client_id, &url, None)
+                .await
+                .map_err(|message| invalid_client(&format!("Client metadata document rejected: {}", message)))?;
+            return Ok(AuthenticatedClient { client_id, kind: ClientKind::MetadataDocument });
         }
-        load_client_metadata(state, &client_id, &url, None)
-            .await
-            .map_err(|message| invalid_client(&format!("Client metadata document rejected: {}", message)))?;
-        return Ok(AuthenticatedClient { client_id, kind: ClientKind::MetadataDocument });
-    }
+        ClientIdKind::Ineligible(reason) => Some(reason),
+        ClientIdKind::NotAUrl => None,
+    };
 
-    let row = lookup_registered_client(state, &client_id)?
-        .ok_or_else(|| invalid_client("Invalid client credentials"))?;
+    let Some(row) = lookup_registered_client(state, &client_id)? else {
+        return Err(invalid_client(&match ineligible_reason {
+            Some(reason) => format!("Unknown client_id; as a metadata document URL it is not usable: {}", reason),
+            None => "Unknown client_id".to_string(),
+        }));
+    };
 
     if row.is_public() {
         return Ok(AuthenticatedClient { client_id, kind: ClientKind::Public });
     }
-    if client_secret.as_deref() == Some(row.client_secret.as_str()) {
-        Ok(AuthenticatedClient { client_id, kind: ClientKind::Confidential })
-    } else {
-        Err(invalid_client("Invalid client credentials"))
+    // This tool exists to diagnose failures, so it says which part of the credentials is wrong.
+    match client_secret {
+        None => Err(invalid_client(
+            "This client is confidential, but the request presented no client_secret (send it in the body or an Authorization: Basic header)",
+        )),
+        Some(secret) if secret == row.client_secret => Ok(AuthenticatedClient { client_id, kind: ClientKind::Confidential }),
+        Some(_) => Err(invalid_client("Invalid client_secret")),
     }
 }
 
@@ -2374,6 +2385,8 @@ mod tests {
             registration_mode: mode,
             token_auth_method: method,
             serve_client_metadata: false,
+            mcp_url: String::new(),
+            token_for_mcp: false,
         }
     }
 
@@ -2667,8 +2680,15 @@ mod tests {
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{params:?}");
             assert_eq!(error.error, "invalid_client");
         }
-        let (_, Json(error)) = authenticate_client(&state, &HeaderMap::new(), &[]).await.unwrap_err();
-        assert_eq!(error.error_description, "Client credentials not provided");
+        let description = |params: Vec<(String, String)>| {
+            let state = &state;
+            async move { authenticate_client(state, &HeaderMap::new(), &params).await.unwrap_err().1.0.error_description }
+        };
+        assert_eq!(description(vec![]).await, "Client credentials not provided");
+        assert_eq!(description(body_params(&[("client_id", "ghost")])).await, "Unknown client_id");
+        assert_eq!(description(body_params(&[("client_id", "manual"), ("client_secret", "wrong")])).await, "Invalid client_secret");
+        assert!(description(body_params(&[("client_id", "manual")])).await.contains("confidential"));
+        assert!(description(body_params(&[("client_id", "http://example.com/doc")])).await.contains("must use https"));
     }
 
     #[tokio::test]

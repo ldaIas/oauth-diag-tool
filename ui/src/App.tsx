@@ -73,7 +73,7 @@ function Shell() {
     setRightPage(CLIENT_CONFIG_LIST);
     if (needsMetadataFetch(form)) {
       pendingFormSubmit.current = form;
-      void api.fetchServerMetadata(form.issuerUrl, form.resourceUrl).then(completeFormSubmit);
+      void api.fetchServerMetadata(metadataSource(form)).then(completeFormSubmit);
     } else {
       void api.saveClientConfig(form.editingId, toConfigInput(form));
     }
@@ -81,7 +81,7 @@ function Shell() {
 
   function pullMetadata(source: MetadataSource) {
     setPullingMetadata(true);
-    void api.fetchServerMetadata(source.issuerUrl, source.resourceUrl).then((outcome) => {
+    void api.fetchServerMetadata(source).then((outcome) => {
       setPullingMetadata(false);
       // Ignore the result if the form was closed or its metadata source changed while the fetch was in flight.
       setRightPage((page) => {

@@ -43,3 +43,34 @@ export function localClientMetadataUrl(callbackUrl: string, configId: number): s
   }
   return port === "" ? null : `http://127.0.0.1:${port}/client-metadata/${configId}`;
 }
+
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Problems with a CIMD config's client ID that would otherwise surface only as a token-endpoint
+ * `invalid_client`: a server treats a client ID that is not a usable URL as a registered client,
+ * which then fails as a public client with no secret.
+ */
+export function clientIdUrlWarnings(clientId: string): string[] {
+  if (clientId.trim() === "") {
+    return [];
+  }
+  const url = URL.canParse(clientId) ? new URL(clientId) : null;
+  if (url === null || (url.protocol !== "https:" && url.protocol !== "http:")) {
+    return [
+      "The client ID must be the URL of the metadata document. The server treats a plain ID as a registered client, and the token request then fails because no secret is sent.",
+    ];
+  }
+  const warnings: string[] = [];
+  if (url.pathname === "/" || url.pathname === "") {
+    warnings.push("Client ID URLs must have a path; the server will not fetch a document from the bare origin.");
+  }
+  if (url.protocol === "http:") {
+    warnings.push(
+      LOOPBACK_HOSTS.has(url.hostname)
+        ? 'An http client ID URL is accepted only when the server allows it (this app\'s servers: "Allow http client ID URLs").'
+        : "Client ID URLs must use https; http is accepted only for loopback hosts.",
+    );
+  }
+  return warnings;
+}

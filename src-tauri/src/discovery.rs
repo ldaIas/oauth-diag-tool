@@ -327,22 +327,21 @@ impl Discovery {
         }
     }
 
-    /// Probes the resource without a token, first with GET and then with an MCP `initialize`
-    /// POST, and returns the `resource_metadata` and `scope` parameters of the first Bearer
-    /// challenge, when one was sent.
-    async fn probe_resource(&mut self, resource_url: &str) -> (Option<String>, Option<String>) {
-        if let Some(fetched) = self.get(resource_url).await {
-            if fetched.status == 401 {
-                return self.read_challenge(resource_url, "GET", &fetched);
-            }
-            self.record(resource_url, fetched.status, "GET: no 401 challenge");
+    /// Probes the URL without a token the way its clients reach it: a plain GET for a protected
+    /// resource, an `initialize` POST for an MCP endpoint (Streamable HTTP servers often reject
+    /// GET). Returns the `resource_metadata` and `scope` parameters of a Bearer challenge.
+    async fn probe_resource(&mut self, resource_url: &str, kind: ResourceKind) -> (Option<String>, Option<String>) {
+        let (method, fetched) = match kind {
+            ResourceKind::Resource => ("GET", self.get(resource_url).await),
+            ResourceKind::Mcp => ("POST initialize", self.post_initialize(resource_url).await),
+        };
+        let Some(fetched) = fetched else {
+            return (None, None);
+        };
+        if fetched.status == 401 {
+            return self.read_challenge(resource_url, method, &fetched);
         }
-        if let Some(fetched) = self.post_initialize(resource_url).await {
-            if fetched.status == 401 {
-                return self.read_challenge(resource_url, "POST initialize", &fetched);
-            }
-            self.record(resource_url, fetched.status, "POST initialize: no 401 challenge");
-        }
+        self.record(resource_url, fetched.status, format!("{}: no 401 challenge", method));
         (None, None)
     }
 
@@ -403,9 +402,9 @@ struct ResourceFindings {
     challenge_scope: Option<String>,
 }
 
-async fn discover_resource(d: &mut Discovery, resource_url: &str) -> Result<ResourceFindings, String> {
+async fn discover_resource(d: &mut Discovery, resource_url: &str, kind: ResourceKind) -> Result<ResourceFindings, String> {
     parse_http_url(resource_url, "resource URL")?;
-    let (challenge_url, challenge_scope) = d.probe_resource(resource_url).await;
+    let (challenge_url, challenge_scope) = d.probe_resource(resource_url, kind).await;
     let metadata = d.find_protected_resource_metadata(resource_url, challenge_url).await?;
 
     let declared = text_field(&metadata, "resource");
@@ -430,11 +429,11 @@ async fn discover_resource(d: &mut Discovery, resource_url: &str) -> Result<Reso
     Ok(ResourceFindings { issuer_url: first.to_string(), metadata, challenge_scope })
 }
 
-async fn run(d: &mut Discovery, resource_url: &str, issuer_url: &str) -> Result<ServerMetadataResponse, String> {
+async fn run(d: &mut Discovery, resource_url: &str, kind: ResourceKind, issuer_url: &str) -> Result<ServerMetadataResponse, String> {
     let findings = if resource_url.trim().is_empty() {
         None
     } else {
-        Some(discover_resource(d, resource_url).await?)
+        Some(discover_resource(d, resource_url, kind).await?)
     };
     let issuer = match &findings {
         Some(f) => f.issuer_url.clone(),
@@ -480,15 +479,23 @@ async fn run(d: &mut Discovery, resource_url: &str, issuer_url: &str) -> Result<
     })
 }
 
+/// What kind of endpoint discovery starts from, which decides how it is probed.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceKind {
+    Resource,
+    Mcp,
+}
+
 /// Discovers authorization server metadata, starting from `resource_url` when it is
 /// non-empty and from `issuer_url` otherwise.
-pub async fn discover(resource_url: &str, issuer_url: &str) -> Result<ServerMetadataResponse, DiscoveryFailure> {
+pub async fn discover(resource_url: &str, kind: ResourceKind, issuer_url: &str) -> Result<ServerMetadataResponse, DiscoveryFailure> {
     let client = reqwest::Client::builder()
         .timeout(REQUEST_TIMEOUT)
         .build()
         .map_err(|e| DiscoveryFailure { error: e.to_string(), trace: Vec::new() })?;
     let mut d = Discovery { client, trace: Vec::new() };
-    match run(&mut d, resource_url, issuer_url).await {
+    match run(&mut d, resource_url, kind, issuer_url).await {
         Ok(response) => Ok(ServerMetadataResponse { trace: d.trace, ..response }),
         Err(error) => Err(DiscoveryFailure { error, trace: d.trace }),
     }
@@ -724,7 +731,7 @@ mod tests {
                 );
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-            let result = discover(&format!("{base}/mcp"), "").await.ok().unwrap();
+            let result = discover(&format!("{base}/mcp"), ResourceKind::Resource, "").await.ok().unwrap();
 
             assert_eq!(result.issuer_url, base);
             assert_eq!(result.token_endpoint, format!("{base}/token"));
@@ -764,7 +771,7 @@ mod tests {
                 );
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-            let result = discover(&format!("{base}/mcp"), "").await.ok().unwrap();
+            let result = discover(&format!("{base}/mcp"), ResourceKind::Resource, "").await.ok().unwrap();
 
             assert_eq!(result.scopes_supported, "prm_scope");
             assert_eq!(result.challenge_scope, "");
@@ -786,7 +793,7 @@ mod tests {
             );
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-            let result = discover("", &base).await.ok().unwrap();
+            let result = discover("", ResourceKind::Resource, &base).await.ok().unwrap();
 
             assert_eq!(result.authorization_endpoint, format!("{base}/authorize"));
             assert_eq!(result.scopes_supported, "as_scope");
@@ -806,7 +813,7 @@ mod tests {
             ))
             .await;
 
-            let failure = discover(&format!("{base}/mcp"), "").await.err().unwrap();
+            let failure = discover(&format!("{base}/mcp"), ResourceKind::Resource, "").await.err().unwrap();
 
             assert!(failure.error.contains("RFC 9728"));
             assert!(failure.trace.iter().any(|s| s.url.contains("oauth-protected-resource/mcp") && s.status == 200));
@@ -816,15 +823,16 @@ mod tests {
         async fn missing_metadata_everywhere_lists_every_attempt() {
             let base = serve(Router::new()).await;
 
-            let failure = discover(&format!("{base}/mcp"), "").await.err().unwrap();
+            let failure = discover(&format!("{base}/mcp"), ResourceKind::Resource, "").await.err().unwrap();
 
             assert!(failure.error.contains("No protected resource metadata"));
-            // The GET and POST resource probes plus the path-insertion and root well-known URLs.
-            assert_eq!(failure.trace.len(), 4);
+            // The GET probe plus the path-insertion and root well-known URLs.
+            assert_eq!(failure.trace.len(), 3);
+            assert!(!failure.trace.iter().any(|s| s.outcome.contains("POST")));
         }
 
         #[tokio::test]
-        async fn falls_back_to_an_initialize_post_when_get_has_no_challenge() {
+        async fn an_mcp_endpoint_is_probed_with_initialize_and_never_with_get() {
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let base = format!("http://{}", listener.local_addr().unwrap());
             let (b1, b2, b3) = (base.clone(), base.clone(), base.clone());
@@ -856,10 +864,10 @@ mod tests {
                 );
             tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
 
-            let result = discover(&format!("{base}/mcp"), "").await.ok().unwrap();
+            let result = discover(&format!("{base}/mcp"), ResourceKind::Mcp, "").await.ok().unwrap();
 
             assert_eq!(result.issuer_url, base);
-            assert!(result.trace.iter().any(|s| s.status == 405 && s.outcome.starts_with("GET")));
+            assert!(!result.trace.iter().any(|s| s.outcome.starts_with("GET")));
             assert!(result.trace.iter().any(|s| s.status == 401 && s.outcome.contains("POST initialize: 401 challenge points to")));
             assert!(!result.trace.iter().any(|s| s.url.contains("/.well-known/oauth-protected-resource")));
         }

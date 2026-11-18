@@ -67,7 +67,9 @@ const SCHEMA: &str = "
         resource_url TEXT NOT NULL DEFAULT '',
         registration_mode TEXT NOT NULL DEFAULT 'preregistered',
         token_auth_method TEXT NOT NULL DEFAULT 'none',
-        serve_client_metadata INTEGER NOT NULL DEFAULT 0
+        serve_client_metadata INTEGER NOT NULL DEFAULT 0,
+        mcp_url TEXT NOT NULL DEFAULT '',
+        token_for_mcp INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -109,6 +111,8 @@ const MIGRATIONS: &[(i64, &str)] = &[
           ALTER TABLE oauth_client_configs ADD COLUMN token_auth_method TEXT NOT NULL DEFAULT 'none';
           ALTER TABLE oauth_client_configs ADD COLUMN serve_client_metadata INTEGER NOT NULL DEFAULT 0;"),
     (16, "ALTER TABLE server_configs ADD COLUMN mcp_enabled INTEGER NOT NULL DEFAULT 0;"),
+    (17, "ALTER TABLE oauth_client_configs ADD COLUMN mcp_url TEXT NOT NULL DEFAULT '';
+          ALTER TABLE oauth_client_configs ADD COLUMN token_for_mcp INTEGER NOT NULL DEFAULT 0;"),
 ];
 
 const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -274,7 +278,7 @@ mod tests {
     #[test]
     fn latest_version_reflects_last_migration() {
         // Pins the intentional version-2 gap: last entry decides, not array length.
-        assert_eq!(LATEST_VERSION, 16);
+        assert_eq!(LATEST_VERSION, 17);
     }
 
     #[test]
@@ -497,6 +501,30 @@ mod tests {
             )
             .unwrap();
         assert_eq!(row, ("preregistered".to_string(), "none".to_string(), 0));
+    }
+
+    #[test]
+    fn upgrade_from_version_sixteen_adds_the_client_mcp_url() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 16);
+             INSERT INTO oauth_client_configs (name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let row: (String, i64) = conn
+            .query_row("SELECT mcp_url, token_for_mcp FROM oauth_client_configs WHERE name = 'old'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(row, (String::new(), 0));
     }
 
     #[test]
