@@ -24,6 +24,15 @@ export function ServerSettingsForm({ edit, saved, changed, onEdit, onSave }: Ser
         Saved changes apply the next time the server starts. Each start invalidates the tokens the server issued earlier.
       </div>
       <SettingsField
+        label="Public URL"
+        help="serverSettings.publicUrl"
+        type="text"
+        placeholder="Leave empty to use http://localhost:<port>"
+        value={edit.publicUrl}
+        error={errors.publicUrl}
+        onChange={(publicUrl) => onEdit({ publicUrl })}
+      />
+      <SettingsField
         label="Redirect URL Override"
         help="serverSettings.redirectUrlOverride"
         type="text"
