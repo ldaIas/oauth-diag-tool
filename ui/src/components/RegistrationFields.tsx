@@ -221,7 +221,13 @@ function RegistrationSummary({ state }: { state: Extract<AuthState, { kind: "don
   const result = interpretRegistration(state.response);
   switch (result.kind) {
     case "registered":
-      return <span className="registration-note">Registered. The client ID{result.clientSecret === "" ? "" : " and secret"} were filled in above; save the configuration to keep them.</span>;
+      return (
+        <span className="registration-note">
+          {result.clientSecret === ""
+            ? "Registered. The client ID was filled in above; save the configuration to keep it."
+            : "Registered. The client ID and secret were filled in above; save the configuration to keep them."}
+        </span>
+      );
     case "rejected":
       return <span className="registration-warning">{`Registration was not accepted: ${result.message}`}</span>;
     default: {
