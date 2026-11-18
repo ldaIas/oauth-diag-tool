@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-17
+- Fix the release build running from the wrong frontend directory. The v0.1.0 tag produced no release, so this is the first release with the 0.1.0 changes [PR](https://github.com/ldaIas/oauth-diag-tool/pull/30)
+
 ## [0.1.0] - 2026-11-17
 - Replace the Elm frontend with TypeScript + React, using tauri-specta generated bindings; Tauri 2.12.5 [PR](https://github.com/ldaIas/oauth-diag-tool/pull/16)
 - Add user-based access to OAuth servers [PR](https://github.com/ldaIas/oauth-diag-tool/pull/17)
