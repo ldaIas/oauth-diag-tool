@@ -4,6 +4,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createApi, type Api } from "./api";
 import { events, type ResourceAccessInfo_Serialize, type ServerConfig } from "./bindings";
+import { keepServers, recordMetadataFetch, type ClientMetadataFetch } from "./lib/serverEvents";
 import type { ParsedClientConfig } from "./lib/types";
 
 export type ResourceAccess = ResourceAccessInfo_Serialize;
@@ -15,6 +16,8 @@ export interface AppState {
   lastError: string | null;
   /** The most recent `/resource` request per server id. */
   resourceAccess: Readonly<Record<number, ResourceAccess>>;
+  /** The most recent client metadata document fetches per server id, newest first. */
+  clientMetadataFetches: Readonly<Record<number, readonly ClientMetadataFetch[]>>;
   api: Api;
   showError(message: string): void;
   dismissError(): void;
@@ -30,14 +33,6 @@ export function useAppState(): AppState {
     throw new Error("useAppState must be used inside AppStateProvider");
   }
   return state;
-}
-
-function keepServers(
-  access: Readonly<Record<number, ResourceAccess>>,
-  servers: readonly ServerConfig[],
-): Readonly<Record<number, ResourceAccess>> {
-  const ids = new Set(servers.map((server) => server.id));
-  return Object.fromEntries(Object.entries(access).filter(([id]) => ids.has(Number(id))));
 }
 
 interface Listenable<T> {
@@ -79,6 +74,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [callbackUrl, setCallbackUrl] = useState("");
   const [lastError, setLastError] = useState<string | null>(null);
   const [resourceAccess, setResourceAccess] = useState<Readonly<Record<number, ResourceAccess>>>({});
+  const [clientMetadataFetches, setClientMetadataFetches] = useState<
+    Readonly<Record<number, readonly ClientMetadataFetch[]>>
+  >({});
   // Mirrors `clientConfigs` so async results can read and patch the latest list synchronously.
   const clientConfigsRef = useRef<ParsedClientConfig[]>([]);
 
@@ -89,6 +87,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           setServers(next);
           // Drop entries for deleted servers so a reused id does not inherit them.
           setResourceAccess((prev) => keepServers(prev, next));
+          setClientMetadataFetches((prev) => keepServers(prev, next));
         },
         onClientConfigs(next) {
           clientConfigsRef.current = next;
@@ -112,6 +111,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    return listenTo("client-metadata-fetched", events.clientMetadataFetched, (payload) => {
+      setClientMetadataFetches((prev) => recordMetadataFetch(prev, payload));
+    }, setLastError);
+  }, []);
+
+  useEffect(() => {
+    return listenTo("server-clients-changed", events.serverClientsChanged, () => void api.loadServerConfigs(), setLastError);
+  }, [api]);
+
+  useEffect(() => {
     return listenTo("server-users-changed", events.serverUsersChanged, () => void api.loadServerConfigs(), setLastError);
   }, [api]);
 
@@ -121,6 +130,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     callbackUrl,
     lastError,
     resourceAccess,
+    clientMetadataFetches,
     api,
     showError: setLastError,
     dismissError: () => setLastError(null),

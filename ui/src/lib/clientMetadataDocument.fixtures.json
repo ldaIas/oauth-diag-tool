@@ -1,0 +1,37 @@
+[
+  {
+    "name": "with scopes",
+    "input": {
+      "clientId": "http://127.0.0.1:5757/client-metadata/3",
+      "name": "My Client",
+      "redirectUri": "http://localhost:5757/callback",
+      "scopes": " openid offline_access "
+    },
+    "expected": {
+      "client_id": "http://127.0.0.1:5757/client-metadata/3",
+      "client_name": "My Client",
+      "redirect_uris": ["http://localhost:5757/callback"],
+      "grant_types": ["authorization_code", "refresh_token"],
+      "response_types": ["code"],
+      "token_endpoint_auth_method": "none",
+      "scope": "openid offline_access"
+    }
+  },
+  {
+    "name": "without scopes",
+    "input": {
+      "clientId": "https://client.example.com/oauth/metadata.json",
+      "name": "Plain",
+      "redirectUri": "http://localhost:5757/callback",
+      "scopes": "   "
+    },
+    "expected": {
+      "client_id": "https://client.example.com/oauth/metadata.json",
+      "client_name": "Plain",
+      "redirect_uris": ["http://localhost:5757/callback"],
+      "grant_types": ["authorization_code", "refresh_token"],
+      "response_types": ["code"],
+      "token_endpoint_auth_method": "none"
+    }
+  }
+]

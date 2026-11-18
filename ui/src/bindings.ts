@@ -14,7 +14,7 @@ export const commands = {
 	createClientConfig: (config: ClientConfigInput) => typedError<null, string>(__TAURI_INVOKE("create_client_config", { config })),
 	updateClientConfig: (id: number, config: ClientConfigInput) => typedError<null, string>(__TAURI_INVOKE("update_client_config", { id, config })),
 	deleteClientConfig: (id: number) => typedError<null, string>(__TAURI_INVOKE("delete_client_config", { id })),
-	updateServerSettings: (id: number, redirectUrlOverride: string, accessTokenExpiry: number, refreshTokenExpiry: number, userBased: boolean) => typedError<null, string>(__TAURI_INVOKE("update_server_settings", { id, redirectUrlOverride, accessTokenExpiry, refreshTokenExpiry, userBased })),
+	updateServerSettings: (id: number, settings: ServerSettingsInput) => typedError<null, string>(__TAURI_INVOKE("update_server_settings", { id, settings })),
 	addUserToServer: (serverId: number, username: string, password: string, userData: string | null) => typedError<null, string>(__TAURI_INVOKE("add_user_to_server", { serverId, username, password, userData })),
 	updateUser: (id: number, password: string, userData: string) => typedError<null, string>(__TAURI_INVOKE("update_user", { id, password, userData })),
 	deleteUser: (id: number) => typedError<null, string>(__TAURI_INVOKE("delete_user", { id })),
@@ -24,12 +24,18 @@ export const commands = {
 	authorizeClient: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("authorize_client", { id })),
 	refreshToken: (id: number) => typedError<AuthResponse, string>(__TAURI_INVOKE("refresh_token", { id })),
 	cancelAuthorization: (id: number) => typedError<null, string>(__TAURI_INVOKE("cancel_authorization", { id })),
-	fetchServerMetadata: (issuerUrl: string) => typedError<ServerMetadataResponse, string>(__TAURI_INVOKE("fetch_server_metadata", { issuerUrl })),
+	fetchServerMetadata: (issuerUrl: string, resourceUrl: string, resourceKind: ResourceKind) => typedError<ServerMetadataResponse, DiscoveryFailure>(__TAURI_INVOKE("fetch_server_metadata", { issuerUrl, resourceUrl, resourceKind })),
+	callResource: (id: number, accessToken: string) => typedError<AuthResponse, string>(__TAURI_INVOKE("call_resource", { id, accessToken })),
+	probeMcp: (id: number, accessToken: string) => typedError<ProbeReport, string>(__TAURI_INVOKE("probe_mcp", { id, accessToken })),
+	registerClient: (registrationEndpoint: string, clientName: string, scopes: string, tokenAuthMethod: TokenAuthMethod) => typedError<AuthResponse, string>(__TAURI_INVOKE("register_client", { registrationEndpoint, clientName, scopes, tokenAuthMethod })),
+	verifyClientDocument: (id: number) => typedError<CheckResult[], string>(__TAURI_INVOKE("verify_client_document", { id })),
 };
 
 /** Events */
 export const events = {
+	clientMetadataFetched: makeEvent<ClientMetadataFetched_Serialize, ClientMetadataFetched_Deserialize>("client-metadata-fetched"),
 	resourceAccess: makeEvent<ResourceAccessInfo_Serialize, ResourceAccessInfo_Deserialize>("resource-access"),
+	serverClientsChanged: makeEvent<ServerClientsChanged, ServerClientsChanged>("server-clients-changed"),
 	serverUsersChanged: makeEvent<ServerUsersChanged, ServerUsersChanged>("server-users-changed"),
 };
 
@@ -38,6 +44,11 @@ export type AuthResponse = {
 	statusCode: number,
 	headers: ([string, string])[],
 	body: string,
+};
+
+export type CheckResult = {
+	passed: boolean,
+	message: string,
 };
 
 export type ClientConfig = {
@@ -56,6 +67,14 @@ export type ClientConfig = {
 	scopesSupported: string,
 	refreshToken: string,
 	disabledRefreshParams: string,
+	resourceUrl: string,
+	registrationMode: RegistrationMode,
+	tokenAuthMethod: TokenAuthMethod,
+	serveClientMetadata: boolean,
+	/**  Empty when the config has no MCP endpoint. */
+	mcpUrl: string,
+	/**  With both URLs set, whether tokens are requested for the MCP URL. */
+	tokenForMcp: boolean,
 };
 
 /**  Field payload shared by the create and update client-config commands. */
@@ -73,14 +92,103 @@ export type ClientConfigInput = {
 	disabledTokenParams: string,
 	scopesSupported: string,
 	disabledRefreshParams: string,
+	resourceUrl: string,
+	registrationMode: RegistrationMode,
+	/**  The method a DCR client registered with; it only matters in `dcr` mode. */
+	tokenAuthMethod: TokenAuthMethod,
+	/**  In `cimd` mode, whether the callback listener serves this config's metadata document. */
+	serveClientMetadata: boolean,
+	/**  Empty when the config has no MCP endpoint. */
+	mcpUrl: string,
+	/**  With both URLs set, whether tokens are requested for the MCP URL. */
+	tokenForMcp: boolean,
+};
+
+/**  Emitted each time a client metadata document is fetched (cache hits do not emit). */
+export type ClientMetadataFetched = ClientMetadataFetched_Serialize | ClientMetadataFetched_Deserialize;
+
+/**  Emitted each time a client metadata document is fetched (cache hits do not emit). */
+export type ClientMetadataFetched_Deserialize = {
+	serverId: number,
+	/**  The client ID URL the document was fetched from */
+	clientId: string,
+	ok: boolean,
+	/**  Why the document was rejected, or a confirmation when it was accepted */
+	message: string,
+	clientName?: string | null,
+	timestamp: string,
+};
+
+/**  Emitted each time a client metadata document is fetched (cache hits do not emit). */
+export type ClientMetadataFetched_Serialize = {
+	serverId: number,
+	/**  The client ID URL the document was fetched from */
+	clientId: string,
+	ok: boolean,
+	/**  Why the document was rejected, or a confirmation when it was accepted */
+	message: string,
+	clientName: string | null,
+	timestamp: string,
+};
+
+export type DiscoveryFailure = {
+	error: string,
+	trace: DiscoveryStep[],
+};
+
+export type DiscoveryStep = {
+	/**  Empty for notes that are not tied to a request. */
+	url: string,
+	/**  0 when no response arrived. */
+	status: number,
+	outcome: string,
 };
 
 export type OAuthClient = {
 	id: number,
 	clientId: string,
+	/**  Empty for public clients (`token_endpoint_auth_method` "none"). */
 	clientSecret: string,
 	authServerId: number,
+	clientName: string,
+	/**  Registered redirect URIs; empty for manual clients, which accept any absolute http(s) URI. */
+	redirectUris: string[],
+	tokenEndpointAuthMethod: string,
+	registration: Registration,
 };
+
+export type ProbeReport = {
+	steps: ProbeStep[],
+	/**  True when every step succeeded */
+	success: boolean,
+	/**  A suggested next step after a failure, or empty */
+	hint: string,
+};
+
+export type ProbeStep = {
+	/**  The JSON-RPC method this step sent */
+	method: string,
+	/**  What was sent, without the token */
+	request: string,
+	/**  0 when no response arrived */
+	status: number,
+	headers: ([string, string])[],
+	/**  The JSON-RPC message pretty-printed, or the raw body when none could be extracted */
+	body: string,
+	ok: boolean,
+	/**  Why the step failed, or empty */
+	problem: string,
+};
+
+/**  How a client came to exist on a server. */
+export type Registration = 
+/**  Added with the "Add Client" button. */
+"manual" | 
+/**  Registered through `POST /register`. */
+"dynamic";
+
+/**  How a client config obtains its `client_id`. */
+export type RegistrationMode = "preregistered" | "cimd" | "dcr";
 
 export type ResourceAccessInfo = ResourceAccessInfo_Serialize | ResourceAccessInfo_Deserialize;
 
@@ -92,6 +200,8 @@ export type ResourceAccessInfo_Deserialize = {
 	timestamp: string,
 	/**  User the token was issued to; None for client_credentials tokens */
 	username?: string | null,
+	/**  The protected resource path that was requested, e.g. `/resource` or `/mcp` */
+	path: string,
 };
 
 export type ResourceAccessInfo_Serialize = {
@@ -102,6 +212,16 @@ export type ResourceAccessInfo_Serialize = {
 	timestamp: string,
 	/**  User the token was issued to; None for client_credentials tokens */
 	username: string | null,
+	/**  The protected resource path that was requested, e.g. `/resource` or `/mcp` */
+	path: string,
+};
+
+/**  What kind of endpoint discovery starts from, which decides how it is probed. */
+export type ResourceKind = "resource" | "mcp";
+
+/**  Emitted when a client registers through `/register` so the UI can reload its client list. */
+export type ServerClientsChanged = {
+	serverId: number,
 };
 
 export type ServerConfig = {
@@ -120,13 +240,49 @@ export type ServerConfig = {
 	/**  When true, the authorize endpoint requires signing in as one of `users` */
 	userBased: boolean,
 	users: ServerUser[],
+	/**  Accept URL client IDs whose metadata document is fetched from the URL */
+	cimdEnabled: boolean,
+	/**  Serve `POST /register` */
+	dcrEnabled: boolean,
+	/**  Allow `http://` client ID URLs on loopback hosts */
+	cimdAllowHttp: boolean,
+	/**  Serve the `/mcp` endpoint and its protected resource metadata */
+	mcpEnabled: boolean,
 };
 
 export type ServerMetadataResponse = {
+	/**  The authorization server metadata document, pretty-printed. */
 	body: string,
+	/**  The protected resource metadata document, pretty-printed; empty when no resource URL was given. */
+	resourceMetadata: string,
+	/**  The issuer the metadata was fetched for; discovered from the resource when one was given. */
+	issuerUrl: string,
 	authorizationEndpoint: string,
 	tokenEndpoint: string,
+	/**  The RFC 7591 dynamic client registration endpoint; empty when the server advertises none. */
+	registrationEndpoint: string,
+	/**  Whether the server advertises support for Client ID Metadata Documents. */
+	clientIdMetadataDocumentSupported: boolean,
+	/**  Space-separated client authentication methods the token endpoint accepts. */
+	tokenEndpointAuthMethodsSupported: string,
+	/**  Space-separated: the challenge scope, else the resource's scopes, else the server's. */
 	scopesSupported: string,
+	/**  The `scope` parameter of the resource's challenge; empty when it sent none. */
+	challengeScope: string,
+	trace: DiscoveryStep[],
+};
+
+/**  The editable per-server settings, saved together. */
+export type ServerSettingsInput = {
+	redirectUrlOverride: string,
+	accessTokenExpiry: number,
+	refreshTokenExpiry: number,
+	userBased: boolean,
+	cimdEnabled: boolean,
+	dcrEnabled: boolean,
+	cimdAllowHttp: boolean,
+	/**  Serve the `/mcp` endpoint and its protected resource metadata */
+	mcpEnabled: boolean,
 };
 
 export type ServerUser = {
@@ -141,6 +297,9 @@ export type ServerUser = {
 export type ServerUsersChanged = {
 	serverId: number,
 };
+
+/**  The `token_endpoint_auth_method` a DCR client registers with. */
+export type TokenAuthMethod = "none" | "client_secret_basic" | "client_secret_post";
 
 /* Tauri Specta runtime */
 async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {

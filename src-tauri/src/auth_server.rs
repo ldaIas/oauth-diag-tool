@@ -6,7 +6,7 @@
 //! (the servers themselves are implemented in `oauth_server`).
 
 use rusqlite::Connection;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use rand::Rng;
@@ -14,15 +14,45 @@ use rand::distributions::Alphanumeric;
 use tokio::task::JoinHandle;
 use tokio::sync::oneshot;
 
+use crate::dcr::ClientRegistration;
 use crate::oauth_server;
+
+/// How a client came to exist on a server.
+#[derive(Serialize, specta::Type, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum Registration {
+    /// Added with the "Add Client" button.
+    Manual,
+    /// Registered through `POST /register`.
+    Dynamic,
+}
+
+impl Registration {
+    fn as_db(self) -> &'static str {
+        match self {
+            Registration::Manual => "manual",
+            Registration::Dynamic => "dynamic",
+        }
+    }
+
+    fn from_db(value: &str) -> Self {
+        if value == "dynamic" { Registration::Dynamic } else { Registration::Manual }
+    }
+}
 
 #[derive(Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct OAuthClient {
     pub id: i64,
     pub client_id: String,
+    /// Empty for public clients (`token_endpoint_auth_method` "none").
     pub client_secret: String,
     pub auth_server_id: i64,
+    pub client_name: String,
+    /// Registered redirect URIs; empty for manual clients, which accept any absolute http(s) URI.
+    pub redirect_uris: Vec<String>,
+    pub token_endpoint_auth_method: String,
+    pub registration: Registration,
 }
 
 #[derive(Serialize, specta::Type)]
@@ -53,6 +83,29 @@ pub struct ServerConfig {
     /// When true, the authorize endpoint requires signing in as one of `users`
     pub user_based: bool,
     pub users: Vec<ServerUser>,
+    /// Accept URL client IDs whose metadata document is fetched from the URL
+    pub cimd_enabled: bool,
+    /// Serve `POST /register`
+    pub dcr_enabled: bool,
+    /// Allow `http://` client ID URLs on loopback hosts
+    pub cimd_allow_http: bool,
+    /// Serve the `/mcp` endpoint and its protected resource metadata
+    pub mcp_enabled: bool,
+}
+
+/// The editable per-server settings, saved together.
+#[derive(Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsInput {
+    pub redirect_url_override: String,
+    pub access_token_expiry: i64,
+    pub refresh_token_expiry: i64,
+    pub user_based: bool,
+    pub cimd_enabled: bool,
+    pub dcr_enabled: bool,
+    pub cimd_allow_http: bool,
+    /// Serve the `/mcp` endpoint and its protected resource metadata
+    pub mcp_enabled: bool,
 }
 
 struct RunningServer {
@@ -109,7 +162,7 @@ pub fn create(conn: &Connection, config_name: &str, auth_server_url: &str, token
 pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<ServerConfig>, String> {
     log::info!("get_server_configs called");
     let mut stmt = conn
-        .prepare("SELECT id, config_name, auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based FROM server_configs")
+        .prepare("SELECT id, config_name, auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled FROM server_configs")
         .map_err(|e| {
             log::error!("failed to prepare query: {}", e);
             e.to_string()
@@ -132,6 +185,10 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
                 refresh_token_expiry: row.get(6)?,
                 user_based: row.get::<_, i64>(7)? != 0,
                 users: Vec::new(),
+                cimd_enabled: row.get::<_, i64>(8)? != 0,
+                dcr_enabled: row.get::<_, i64>(9)? != 0,
+                cimd_allow_http: row.get::<_, i64>(10)? != 0,
+                mcp_enabled: row.get::<_, i64>(11)? != 0,
             })
         })
         .map_err(|e| e.to_string())?
@@ -139,7 +196,7 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
         .map_err(|e| e.to_string())?;
 
     let mut client_stmt = conn
-        .prepare("SELECT id, client_id, client_secret, auth_server_id FROM auth_server_clients WHERE auth_server_id = ?1 ORDER BY id ASC")
+        .prepare("SELECT id, client_id, client_secret, auth_server_id, client_name, redirect_uris, token_endpoint_auth_method, registration FROM auth_server_clients WHERE auth_server_id = ?1 ORDER BY id ASC")
         .map_err(|e| {
             log::error!("failed to prepare client query: {}", e);
             e.to_string()
@@ -169,11 +226,17 @@ pub fn get_all(conn: &Connection, running: &RunningServers) -> Result<Vec<Server
         server.running = running.is_running(&server.id);
         let clients = client_stmt
             .query_map(rusqlite::params![server.id], |row| {
+                let redirect_uris: String = row.get(5)?;
+                let registration: String = row.get(7)?;
                 Ok(OAuthClient {
                     id: row.get(0)?,
                     client_id: row.get(1)?,
                     client_secret: row.get(2)?,
                     auth_server_id: row.get(3)?,
+                    client_name: row.get(4)?,
+                    redirect_uris: serde_json::from_str(&redirect_uris).unwrap_or_default(),
+                    token_endpoint_auth_method: row.get(6)?,
+                    registration: Registration::from_db(&registration),
                 })
             })
             .map_err(|e| e.to_string())?
@@ -207,11 +270,15 @@ pub fn delete(conn: &Connection, running: &mut RunningServers, id: i64) -> Resul
     Ok(())
 }
 
+fn random_alphanumeric(len: usize) -> String {
+    let mut rng = rand::thread_rng();
+    (0..len).map(|_| rng.sample(Alphanumeric) as char).collect()
+}
+
 pub fn add_client(conn: &Connection, auth_server_id: i64) -> Result<(), String> {
     log::info!("add_client_to_server: auth_server_id={}", auth_server_id);
-    let mut rng = rand::thread_rng();
-    let client_id: String = (0..24).map(|_| rng.sample(Alphanumeric) as char).collect();
-    let client_secret: String = (0..48).map(|_| rng.sample(Alphanumeric) as char).collect();
+    let client_id = random_alphanumeric(24);
+    let client_secret = random_alphanumeric(48);
 
     conn.execute(
         "INSERT INTO auth_server_clients (client_id, client_secret, auth_server_id) VALUES (?1, ?2, ?3)",
@@ -223,6 +290,45 @@ pub fn add_client(conn: &Connection, auth_server_id: i64) -> Result<(), String> 
     })?;
     log::info!("client added successfully: client_id={}", client_id);
     Ok(())
+}
+
+/// Credentials issued by a dynamic registration.
+pub struct RegisteredClient {
+    pub client_id: String,
+    /// None for public clients.
+    pub client_secret: Option<String>,
+    pub issued_at: i64,
+}
+
+/// Stores a client registered through `POST /register`. Public clients get no secret.
+pub fn add_dynamic_client(
+    conn: &Connection,
+    auth_server_id: i64,
+    registration: &ClientRegistration,
+) -> Result<RegisteredClient, String> {
+    let client_id = random_alphanumeric(24);
+    let client_secret = (!registration.is_public()).then(|| random_alphanumeric(48));
+    let redirect_uris = serde_json::to_string(&registration.redirect_uris).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO auth_server_clients (client_id, client_secret, auth_server_id, client_name, redirect_uris, token_endpoint_auth_method, registration)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            client_id,
+            client_secret.as_deref().unwrap_or(""),
+            auth_server_id,
+            registration.client_name,
+            redirect_uris,
+            registration.token_endpoint_auth_method,
+            Registration::Dynamic.as_db(),
+        ],
+    )
+    .map_err(|e| {
+        log::error!("failed to insert dynamic client: {}", e);
+        e.to_string()
+    })?;
+    log::info!("dynamic client registered: client_id={}", client_id);
+    Ok(RegisteredClient { client_id, client_secret, issued_at: chrono::Utc::now().timestamp() })
 }
 
 pub fn delete_client(conn: &Connection, id: i64) -> Result<(), String> {
@@ -350,21 +456,33 @@ pub fn lookup_user_data(conn: &Connection, server_id: i64, username: &str) -> Re
     }
 }
 
-pub fn update_settings(
-    conn: &Connection,
-    id: i64,
-    redirect_url_override: &str,
-    access_token_expiry: i64,
-    refresh_token_expiry: i64,
-    user_based: bool,
-) -> Result<(), String> {
+pub fn update_settings(conn: &Connection, id: i64, settings: &ServerSettingsInput) -> Result<(), String> {
     log::info!(
-        "update_server_settings: id={}, redirect_override={}, access_expiry={}, refresh_expiry={}, user_based={}",
-        id, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based
+        "update_server_settings: id={}, redirect_override={}, access_expiry={}, refresh_expiry={}, user_based={}, cimd={}, dcr={}, cimd_allow_http={}, mcp={}",
+        id,
+        settings.redirect_url_override,
+        settings.access_token_expiry,
+        settings.refresh_token_expiry,
+        settings.user_based,
+        settings.cimd_enabled,
+        settings.dcr_enabled,
+        settings.cimd_allow_http,
+        settings.mcp_enabled
     );
     conn.execute(
-        "UPDATE server_configs SET redirect_url_override = ?1, access_token_expiry = ?2, refresh_token_expiry = ?3, user_based = ?4 WHERE id = ?5",
-        rusqlite::params![redirect_url_override, access_token_expiry, refresh_token_expiry, user_based as i64, id],
+        "UPDATE server_configs SET redirect_url_override = ?1, access_token_expiry = ?2, refresh_token_expiry = ?3, user_based = ?4,
+         cimd_enabled = ?5, dcr_enabled = ?6, cimd_allow_http = ?7, mcp_enabled = ?8 WHERE id = ?9",
+        rusqlite::params![
+            settings.redirect_url_override,
+            settings.access_token_expiry,
+            settings.refresh_token_expiry,
+            settings.user_based as i64,
+            settings.cimd_enabled as i64,
+            settings.dcr_enabled as i64,
+            settings.cimd_allow_http as i64,
+            settings.mcp_enabled as i64,
+            id
+        ],
     )
     .map_err(|e| {
         log::error!("failed to update server settings: {}", e);
@@ -381,10 +499,10 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         return Err("Server is already running".to_string());
     }
 
-    let (auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based) = {
+    let (auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled) = {
         let conn = db.lock().map_err(|e| e.to_string())?;
         let mut stmt = conn
-            .prepare("SELECT auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based FROM server_configs WHERE id = ?1")
+            .prepare("SELECT auth_server_url, token_url, redirect_url_override, access_token_expiry, refresh_token_expiry, user_based, cimd_enabled, dcr_enabled, cimd_allow_http, mcp_enabled FROM server_configs WHERE id = ?1")
             .map_err(|e| e.to_string())?;
         stmt.query_row(rusqlite::params![id], |row| {
             Ok((
@@ -394,6 +512,10 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
                 row.get::<_, i64>(5)? != 0,
+                row.get::<_, i64>(6)? != 0,
+                row.get::<_, i64>(7)? != 0,
+                row.get::<_, i64>(8)? != 0,
+                row.get::<_, i64>(9)? != 0,
             ))
         })
         .map_err(|e| e.to_string())?
@@ -417,8 +539,14 @@ pub fn start(db: &Arc<Mutex<Connection>>, running: &mut RunningServers, id: i64,
         access_token_expiry: access_token_expiry as u64,
         refresh_token_expiry: refresh_token_expiry as u64,
         user_based,
+        cimd_enabled,
+        dcr_enabled,
+        cimd_allow_http,
+        mcp_enabled,
+        cimd_cache: Default::default(),
+        http: crate::cimd::http_client(),
         signing_key,
-        app_handle,
+        app_handle: Some(app_handle),
     };
 
     let router = oauth_server::build_router(server_state);
@@ -481,6 +609,19 @@ mod tests {
         RunningServers::new(tokio::runtime::Runtime::new().expect("create runtime"))
     }
 
+    fn settings(redirect: &str, access: i64, refresh: i64, user_based: bool) -> ServerSettingsInput {
+        ServerSettingsInput {
+            redirect_url_override: redirect.to_string(),
+            access_token_expiry: access,
+            refresh_token_expiry: refresh,
+            user_based,
+            cimd_enabled: true,
+            dcr_enabled: true,
+            cimd_allow_http: false,
+            mcp_enabled: false,
+        }
+    }
+
     #[test]
     fn extract_port_parses_valid_urls() {
         assert_eq!(extract_port("http://localhost:9500"), Ok(9500));
@@ -523,6 +664,86 @@ mod tests {
         assert_eq!(config.refresh_token_expiry, 86400);
         assert!(!config.user_based);
         assert!(config.users.is_empty());
+        assert!(config.cimd_enabled);
+        assert!(config.dcr_enabled);
+        assert!(!config.cimd_allow_http);
+        assert!(!config.mcp_enabled);
+    }
+
+    #[test]
+    fn client_metadata_settings_roundtrip() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+        let id = server_with_id(&conn, &running);
+
+        let mut input = settings("", 3600, 86400, false);
+        input.cimd_enabled = false;
+        input.dcr_enabled = false;
+        input.cimd_allow_http = true;
+        input.mcp_enabled = true;
+        update_settings(&conn, id, &input).unwrap();
+
+        let config = &get_all(&conn, &running).unwrap()[0];
+        assert!(!config.cimd_enabled);
+        assert!(!config.dcr_enabled);
+        assert!(config.cimd_allow_http);
+        assert!(config.mcp_enabled);
+    }
+
+    fn registration(method: &str) -> ClientRegistration {
+        ClientRegistration {
+            client_name: "Dyn".to_string(),
+            redirect_uris: vec!["http://localhost:3000/cb".to_string()],
+            grant_types: vec!["authorization_code".to_string()],
+            response_types: vec!["code".to_string()],
+            token_endpoint_auth_method: method.to_string(),
+            scope: None,
+        }
+    }
+
+    #[test]
+    fn manual_clients_are_reported_as_manual_without_redirect_uris() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+        let id = server_with_id(&conn, &running);
+        add_client(&conn, id).unwrap();
+
+        let client = &get_all(&conn, &running).unwrap()[0].clients[0];
+        assert_eq!(client.registration, Registration::Manual);
+        assert!(client.redirect_uris.is_empty());
+        assert_eq!(client.client_name, "");
+    }
+
+    #[test]
+    fn dynamic_confidential_client_gets_a_secret_and_is_persisted() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+        let id = server_with_id(&conn, &running);
+
+        let issued = add_dynamic_client(&conn, id, &registration("client_secret_post")).unwrap();
+        assert_eq!(issued.client_id.len(), 24);
+        assert_eq!(issued.client_secret.as_deref().map(str::len), Some(48));
+
+        let client = &get_all(&conn, &running).unwrap()[0].clients[0];
+        assert_eq!(client.client_id, issued.client_id);
+        assert_eq!(client.client_secret, issued.client_secret.unwrap());
+        assert_eq!(client.registration, Registration::Dynamic);
+        assert_eq!(client.client_name, "Dyn");
+        assert_eq!(client.redirect_uris, vec!["http://localhost:3000/cb"]);
+        assert_eq!(client.token_endpoint_auth_method, "client_secret_post");
+    }
+
+    #[test]
+    fn dynamic_public_client_has_no_secret() {
+        let conn = crate::db::open_test_connection();
+        let running = test_runtime();
+        let id = server_with_id(&conn, &running);
+
+        let issued = add_dynamic_client(&conn, id, &registration("none")).unwrap();
+        assert_eq!(issued.client_secret, None);
+        let client = &get_all(&conn, &running).unwrap()[0].clients[0];
+        assert_eq!(client.client_secret, "");
+        assert_eq!(client.token_endpoint_auth_method, "none");
     }
 
     #[test]
@@ -590,7 +811,7 @@ mod tests {
         create(&conn, "server", "http://localhost:9500", "http://localhost:9500/token").unwrap();
         let id = get_all(&conn, &running).unwrap()[0].id;
 
-        update_settings(&conn, id, "http://localhost:8080/cb", 120, 7200, true).unwrap();
+        update_settings(&conn, id, &settings("http://localhost:8080/cb", 120, 7200, true)).unwrap();
 
         let config = &get_all(&conn, &running).unwrap()[0];
         assert_eq!(config.redirect_url_override, "http://localhost:8080/cb");
@@ -598,7 +819,7 @@ mod tests {
         assert_eq!(config.refresh_token_expiry, 7200);
         assert!(config.user_based);
 
-        update_settings(&conn, id, "", 120, 7200, false).unwrap();
+        update_settings(&conn, id, &settings("", 120, 7200, false)).unwrap();
         assert!(!get_all(&conn, &running).unwrap()[0].user_based);
     }
 
@@ -693,8 +914,8 @@ mod tests {
         let id = server_with_id(&conn, &running);
         add_user(&conn, id, "alice", "pw", None).unwrap();
 
-        update_settings(&conn, id, "", 3600, 86400, true).unwrap();
-        update_settings(&conn, id, "", 3600, 86400, false).unwrap();
+        update_settings(&conn, id, &settings("", 3600, 86400, true)).unwrap();
+        update_settings(&conn, id, &settings("", 3600, 86400, false)).unwrap();
         assert_eq!(get_all(&conn, &running).unwrap()[0].users.len(), 1);
     }
 

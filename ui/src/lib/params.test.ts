@@ -7,6 +7,7 @@ import {
   isStringValue,
   parseParamMap,
   serializeExtraParams,
+  sectionParams,
   serializeParamMap,
 } from "./params";
 
@@ -62,5 +63,28 @@ describe("param map round-trips (clientConfig encoding)", () => {
     const text = serializeExtraParams({});
     expect(text).toBe("");
     expect(parseParamMap(text, isStringValue)).toEqual({});
+  });
+});
+
+describe("sectionParams", () => {
+  test("lists standard params then extras when there is no resource URL", () => {
+    expect(sectionParams(["client_id", "scope"], "", ["audience"])).toEqual(["client_id", "scope", "audience"]);
+  });
+
+  test("adds resource after the standard params when there is a resource URL", () => {
+    expect(sectionParams(["client_id", "scope"], "https://r.test", ["audience"])).toEqual([
+      "client_id",
+      "scope",
+      "resource",
+      "audience",
+    ]);
+  });
+
+  test("does not list an extra resource param twice", () => {
+    expect(sectionParams(["client_id"], "https://r.test", ["resource", "audience"])).toEqual(["client_id", "resource", "audience"]);
+  });
+
+  test("lists an extra resource param when there is no resource URL", () => {
+    expect(sectionParams(["client_id"], "", ["resource"])).toEqual(["client_id", "resource"]);
   });
 });

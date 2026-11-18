@@ -44,6 +44,11 @@ export function splitAtAccessToken(body: string): BodySplit | null {
   };
 }
 
+/** The `access_token` string in a token response body, or null when there is none. */
+export function findAccessToken(body: string): string | null {
+  return splitAtAccessToken(body)?.token ?? null;
+}
+
 function decodeSegment(segment: string): unknown {
   const base64 = segment.replace(/-/g, "+").replace(/_/g, "/");
   const padded = base64 + "=".repeat((4 - (base64.length % 4)) % 4);

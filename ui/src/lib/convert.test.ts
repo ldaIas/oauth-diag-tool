@@ -22,6 +22,12 @@ const sampleConfig: ParsedClientConfig = {
   scopesSupported: "openid profile",
   refreshToken: "rt-12345",
   disabledRefreshParams: { scope: true },
+  resourceUrl: "https://mcp.example.com/mcp",
+  mcpUrl: "https://mcp.example.com/endpoint",
+  tokenForMcp: true,
+  registrationMode: "dcr",
+  tokenAuthMethod: "client_secret_basic",
+  serveClientMetadata: true,
 };
 
 /** The input payload omits id and refreshToken, so supply them to rebuild a full row. */
@@ -45,6 +51,12 @@ const emptyRow: ClientConfig = {
   scopesSupported: "",
   refreshToken: "",
   disabledRefreshParams: "",
+  resourceUrl: "",
+  mcpUrl: "",
+  tokenForMcp: false,
+  registrationMode: "preregistered",
+  tokenAuthMethod: "none",
+  serveClientMetadata: false,
 };
 
 describe("parseClientConfig / toClientConfigInput", () => {
@@ -77,6 +89,10 @@ describe("parseClientConfig / toClientConfigInput", () => {
   test("parses empty-string param columns to empty maps", () => {
     const parsed = parseClientConfig(emptyRow);
     expect([parsed.extraParams, parsed.disabledParams, parsed.disabledTokenParams, parsed.disabledRefreshParams]).toEqual([{}, {}, {}, {}]);
+  });
+
+  test("parses an empty resource URL as no resource", () => {
+    expect(parseClientConfig(emptyRow).resourceUrl).toBe("");
   });
 
   test("falls back to empty maps on malformed or mistyped JSON", () => {

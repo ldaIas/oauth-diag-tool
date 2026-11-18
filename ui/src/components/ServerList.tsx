@@ -1,13 +1,16 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { OAuthClient, ServerConfig, ServerUser } from "../bindings";
 import type { ServerListUi } from "../hooks/useServerListUi";
 import type { ImportedClientFields } from "../lib/clientConfigForm";
 import { helpText, type HelpKey } from "../lib/help";
+import { claudeMcpAddCommand, mcpUrl } from "../lib/mcpEndpoint";
 import { nextPort } from "../lib/ports";
 import { matchesSearch } from "../lib/search";
+import { clientIdHost, clientSearchTerms, hasSecret, registrationLabel } from "../lib/serverClients";
+import type { ClientMetadataFetch } from "../lib/serverEvents";
 import { canSaveUserEdit, defaultUserData, type AddUserDraft, type UserEdit } from "../lib/serverUsers";
 import { useAppState, type ResourceAccess } from "../state";
 import { HelpTip } from "./HelpTip";
@@ -26,7 +29,7 @@ export function ServerList({ ui, onOpenCreateForm, onImportClient }: ServerListP
     matchesSearch(ui.search, [
       server.configName,
       `localhost:${server.port}`,
-      ...server.clients.map((client) => client.clientId),
+      ...server.clients.flatMap(clientSearchTerms),
       ...server.users.map((user) => user.username),
     ]),
   );
@@ -68,7 +71,7 @@ interface ServerCardProps {
 }
 
 function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
-  const { api, resourceAccess } = useAppState();
+  const { api, resourceAccess, clientMetadataFetches } = useAppState();
   const cardExpanded = ui.expandedCards.has(server.id);
   const clientsExpanded = ui.expandedClients.has(server.id);
   const settingsExpanded = ui.expandedSettings.has(server.id);
@@ -151,7 +154,11 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
           />
         )}
       </div>
+      {server.mcpEnabled && <McpSection name={server.configName} issuerUrl={server.issuerUrl} />}
       <ResourceSection issuerUrl={server.issuerUrl} access={resourceAccess[server.id]} />
+      {(server.cimdEnabled || (clientMetadataFetches[server.id] ?? []).length > 0) && (
+        <MetadataFetchSection fetches={clientMetadataFetches[server.id] ?? []} />
+      )}
       {(server.users.length > 0 || server.userBased) && <UsersSection server={server} ui={ui} />}
       <div className="client-section">
         <div className="client-section-header">
@@ -185,6 +192,47 @@ function ServerCard({ server, ui, onImportClient }: ServerCardProps) {
   );
 }
 
+function McpSection({ name, issuerUrl }: { name: string; issuerUrl: string }) {
+  const url = mcpUrl(issuerUrl);
+  const command = claudeMcpAddCommand(name, issuerUrl);
+  return (
+    <div className="resource-section">
+      <div className="resource-section-header">
+        <span className="section-label label-with-help">
+          MCP
+          <HelpTip text={helpText("server.mcpEndpoint")} />
+        </span>
+      </div>
+      <CopyLine label="URL" text={url} />
+      <CopyLine label="Claude Code" text={command} />
+    </div>
+  );
+}
+
+function CopyLine({ label, text }: { label: string; text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1200);
+      })
+      .catch(() => {});
+  }
+
+  return (
+    <div className="copy-line">
+      <span className="detail-label">{label}</span>
+      <code className="copy-line-text">{text}</code>
+      <button type="button" className="btn-import" onClick={copy}>
+        {copied ? "Copied" : "Copy"}
+      </button>
+    </div>
+  );
+}
+
 function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: ResourceAccess | undefined }) {
   return (
     <div className="resource-section">
@@ -202,6 +250,7 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
         <div className="resource-empty">No resource requests yet</div>
       ) : (
         <div className="resource-details">
+          <Detail label="Last Path" value={access.path} />
           <Detail label="Last Client" value={access.clientId === "" ? "—" : access.clientId} />
           <Detail label="Last User" value={access.username ?? "—"} />
           <Detail label="Status" value={access.status === 200 ? "200 OK" : String(access.status)} />
@@ -211,6 +260,39 @@ function ResourceSection({ issuerUrl, access }: { issuerUrl: string; access: Res
             <Detail label="Error" value={access.error} />
           )}
           <Detail label="Time" value={access.timestamp} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MetadataFetchSection({ fetches }: { fetches: readonly ClientMetadataFetch[] }) {
+  return (
+    <div className="resource-section">
+      <div className="resource-section-header">
+        <span className="section-label label-with-help">
+          Client metadata fetches
+          <HelpTip text={helpText("server.metadataFetches")} />
+        </span>
+      </div>
+      {fetches.length === 0 ? (
+        <div className="resource-empty">No metadata documents fetched yet</div>
+      ) : (
+        <div className="fetch-list">
+          {fetches.map((fetch) => (
+            <div key={`${fetch.timestamp}-${fetch.clientId}`} className="fetch-entry">
+              <div className="fetch-entry-header">
+                <span className={fetch.ok ? "fetch-status fetch-ok" : "fetch-status fetch-failed"}>
+                  {fetch.ok ? "OK" : "Rejected"}
+                </span>
+                <span className="fetch-host">{clientIdHost(fetch.clientId)}</span>
+                {fetch.clientName !== null && <span className="fetch-name">{fetch.clientName}</span>}
+              </div>
+              <div className="fetch-url">{fetch.clientId}</div>
+              <div className="fetch-message">{fetch.message}</div>
+              <div className="fetch-time">{fetch.timestamp}</div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -229,7 +311,15 @@ function ClientCard({
   return (
     <div className="client-card">
       <div className="client-card-header">
-        <span className="client-label">{`Client ${client.id}`}</span>
+        <span className="label-with-help">
+          <span className="client-label">{`Client ${client.id}`}</span>
+          {client.registration === "dynamic" && (
+            <span className="client-badge">
+              {registrationLabel(client.registration)}
+              <HelpTip text={helpText("server.dynamicClient")} />
+            </span>
+          )}
+        </span>
         <div className="client-card-actions">
           <button className="btn-import" onClick={onImport}>
             Import
@@ -241,7 +331,18 @@ function ClientCard({
       </div>
       <div className="client-details">
         <Detail label="Client ID" value={client.clientId} help="server.clientId" />
-        <Detail label="Secret" value={client.clientSecret} help="server.clientSecret" />
+        {hasSecret(client) && <Detail label="Secret" value={client.clientSecret} help="server.clientSecret" />}
+        {client.registration === "dynamic" && (
+          <>
+            {client.clientName !== "" && <Detail label="Name" value={client.clientName} help="server.clientName" />}
+            <Detail label="Auth method" value={client.tokenEndpointAuthMethod} help="server.authMethod" />
+            <Detail
+              label="Redirect URIs"
+              value={client.redirectUris.length === 0 ? "—" : client.redirectUris.join(", ")}
+              help="server.redirectUris"
+            />
+          </>
+        )}
       </div>
     </div>
   );

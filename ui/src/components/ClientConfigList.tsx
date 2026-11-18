@@ -3,19 +3,20 @@
 
 import type { ClientConfigListUi, DisabledParamsField, ExpandableSection } from "../hooks/useClientConfigListUi";
 import { helpText } from "../lib/help";
-import { sortedEntries } from "../lib/params";
+import { findAccessToken } from "../lib/accessToken";
+import { metadataSourceFor, tokenResourceUrl } from "../lib/clientConfigForm";
+import { sectionParams, sortedEntries } from "../lib/params";
+import { credentialStyle, refreshParamNames, sendParamNames, sendsClientSecret, tokenParamNames } from "../lib/registration";
 import { matchesSearch } from "../lib/search";
 import type { ParsedClientConfig } from "../lib/types";
 import { useAppState } from "../state";
-import { AuthorizeButtons, AuthResponseView, MetadataStateView } from "./AuthResults";
+import { AuthorizeButtons, AuthResponseView, MetadataStateView, ProbeStateView, VerifyStateView } from "./AuthResults";
+import { ClientMetadataDocumentView } from "./ClientMetadataDocumentView";
 import { HelpTip } from "./HelpTip";
 import { CardToggle, chevron, Detail, SearchBox } from "./shared";
 import { ToggleSection } from "./ToggleSection";
 
-const SEND_PARAMS = ["client_id", "client_secret", "scope"];
 const AUTHORIZE_PARAMS = ["response_type", "client_id", "redirect_uri", "state", "scope", "code_challenge", "code_challenge_method"];
-const TOKEN_PARAMS = ["client_id", "client_secret", "redirect_uri", "code_verifier"];
-const REFRESH_PARAMS = ["grant_type", "refresh_token", "client_id", "client_secret", "scope"];
 
 interface ClientConfigListProps {
   ui: ClientConfigListUi;
@@ -26,7 +27,7 @@ interface ClientConfigListProps {
 export function ClientConfigList({ ui, onOpenCreateForm, onEditConfig }: ClientConfigListProps) {
   const { clientConfigs } = useAppState();
   const visible = clientConfigs.filter((config) =>
-    matchesSearch(ui.search, [config.name, config.grantType, config.clientId, config.issuerUrl]),
+    matchesSearch(ui.search, [config.name, config.grantType, config.clientId, config.issuerUrl, config.resourceUrl, config.mcpUrl]),
   );
   return (
     <div className="page-content">
@@ -78,6 +79,23 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
   const metadataExpanded = ui.isExpanded("metadata", config.id);
   const isAuthCode = config.grantType === "authorization_code";
   const extraKeys = sortedEntries(config.extraParams).map(([key]) => key);
+  const resourceState = ui.resourceState(config.id);
+  const resourceExpanded = ui.isExpanded("resource", config.id);
+  const probeState = ui.probeState(config.id);
+  const probeExpanded = ui.isExpanded("probe", config.id);
+  const hasResource = config.resourceUrl !== "";
+  const hasMcp = config.mcpUrl !== "";
+  const tokenResource = tokenResourceUrl(config);
+  const style = credentialStyle(config.registrationMode, config.tokenAuthMethod);
+  const isCimd = config.registrationMode === "cimd";
+  const verifyState = ui.verifyState(config.id);
+  const verifyExpanded = ui.isExpanded("verify", config.id);
+  const documentExpanded = ui.isExpanded("document", config.id);
+  const accessToken = state.kind === "done" ? findAccessToken(state.response.body) : null;
+
+  function paramNames(standard: readonly string[]) {
+    return sectionParams(standard, tokenResource, extraKeys);
+  }
 
   function section(
     title: string,
@@ -127,6 +145,30 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
             onRefreshToken={() => void ui.refreshToken(config.id)}
             onCancel={() => ui.cancelAuthorize(config.id)}
           />
+          {hasResource && accessToken !== null && (
+            <span>
+              <button
+                className="btn-server-control btn-authorize"
+                disabled={resourceState.kind === "loading"}
+                onClick={() => void ui.callResource(config.id, accessToken)}
+              >
+                {resourceState.kind === "loading" ? "Calling..." : "Call Resource"}
+              </button>
+              <HelpTip text={helpText("clientConfig.callResource")} />
+            </span>
+          )}
+          {hasMcp && accessToken !== null && (
+            <span>
+              <button
+                className="btn-server-control btn-authorize"
+                disabled={probeState.kind === "loading"}
+                onClick={() => void ui.probeMcp(config.id, accessToken)}
+              >
+                {probeState.kind === "loading" ? "Probing..." : "MCP Probe"}
+              </button>
+              <HelpTip text={helpText("clientConfig.probeMcp")} />
+            </span>
+          )}
           <button className="btn-import" onClick={onEdit}>
             Edit
           </button>
@@ -136,11 +178,18 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
         </div>
       </div>
       <div className="server-card-details">
+        {hasResource && <Detail label="Resource" value={config.resourceUrl} help="clientConfig.resourceUrl" />}
+        {hasMcp && <Detail label="MCP" value={config.mcpUrl} help="clientConfig.mcpUrl" />}
+        {hasResource && hasMcp && <Detail label="Tokens For" value={tokenResource} help="clientConfig.tokenForMcp" />}
         <Detail label="Issuer" value={config.issuerUrl} help="clientConfig.issuerUrl" />
         <Detail label="Authorization" value={config.authorizationUrl} help="clientConfig.authorizationUrl" />
         <Detail label="Token" value={config.tokenUrl} help="clientConfig.tokenUrl" />
         <Detail label="Client ID" value={config.clientId} help="clientConfig.clientId" />
-        <Detail label="Secret" value={config.clientSecret} help="clientConfig.clientSecret" />
+        <Detail label="Registration" value={config.registrationMode} help="clientConfig.registrationMode" />
+        {sendsClientSecret(style) && <Detail label="Secret" value={config.clientSecret} help="clientConfig.clientSecret" />}
+        {config.registrationMode === "dcr" && (
+          <Detail label="Auth Method" value={config.tokenAuthMethod} help="clientConfig.tokenAuthMethod" />
+        )}
         {isAuthCode && callbackUrl !== "" && (
           <Detail label="Callback URL" value={callbackUrl} help="clientConfig.callbackUrl" />
         )}
@@ -154,14 +203,53 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
       </div>
       {isAuthCode ? (
         <div>
-          {section("Authorize Parameters", helpText("paramSection.authorize"), "params", "disabledParams", [...AUTHORIZE_PARAMS, ...extraKeys])}
-          {section("Token Parameters", helpText("paramSection.token"), "tokenParams", "disabledTokenParams", [...TOKEN_PARAMS, ...extraKeys])}
+          {section("Authorize Parameters", helpText("paramSection.authorize"), "params", "disabledParams", paramNames(AUTHORIZE_PARAMS))}
+          {section("Token Parameters", helpText("paramSection.token"), "tokenParams", "disabledTokenParams", paramNames(tokenParamNames(style)))}
         </div>
       ) : (
-        section("Send Parameters", helpText("paramSection.send"), "params", "disabledParams", [...SEND_PARAMS, ...extraKeys])
+        section("Send Parameters", helpText("paramSection.send"), "params", "disabledParams", paramNames(sendParamNames(style)))
       )}
       {config.refreshToken !== "" &&
-        section("Refresh Token Parameters", helpText("paramSection.refresh"), "refreshParams", "disabledRefreshParams", REFRESH_PARAMS)}
+        section("Refresh Token Parameters", helpText("paramSection.refresh"), "refreshParams", "disabledRefreshParams", sectionParams(refreshParamNames(style), tokenResource, []))}
+      {isCimd && (
+        <>
+          <div className="param-toggles">
+            <span className="label-with-help">
+              <span className="expandable-toggle" onClick={() => ui.toggleSection("document", config.id)}>
+                {`${chevron(documentExpanded)} Client Metadata Document`}
+              </span>
+              <HelpTip text={helpText("clientConfig.clientMetadataDocument")} />
+            </span>
+            {documentExpanded && callbackUrl !== "" && (
+              <div className="metadata-section-content">
+                <ClientMetadataDocumentView
+                  subject={{ clientId: config.clientId, name: config.name, redirectUri: callbackUrl, scopes: config.scopes }}
+                />
+              </div>
+            )}
+          </div>
+          <div className="param-toggles">
+            <span className="label-with-help">
+              <span className="expandable-toggle" onClick={() => ui.toggleSection("verify", config.id)}>
+                {`${chevron(verifyExpanded)} Verify Document`}
+              </span>
+              <HelpTip text={helpText("clientConfig.verifyDocument")} />
+            </span>
+            {verifyExpanded && (
+              <div className="metadata-section-content">
+                <button
+                  className="btn-server-control btn-authorize"
+                  disabled={verifyState.kind === "loading"}
+                  onClick={() => void ui.verifyDocument(config.id)}
+                >
+                  Verify Document
+                </button>
+                <VerifyStateView state={verifyState} />
+              </div>
+            )}
+          </div>
+        </>
+      )}
       <div className="param-toggles">
         <span className="label-with-help">
           <span className="expandable-toggle" onClick={() => ui.toggleSection("metadata", config.id)}>
@@ -173,7 +261,7 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
           <div className="metadata-section-content">
             <button
               className="btn-server-control btn-authorize"
-              onClick={() => void ui.fetchMetadata(config.id, config.issuerUrl)}
+              onClick={() => void ui.fetchMetadata(config.id, metadataSourceFor(config, null))}
             >
               Refresh Metadata
             </button>
@@ -187,6 +275,28 @@ function ConfigCard({ config, ui, onEdit }: ConfigCardProps) {
             {`${chevron(resultsExpanded)} Results`}
           </span>
           {resultsExpanded && <AuthResponseView state={state} />}
+        </div>
+      )}
+      {resourceState.kind !== "idle" && (
+        <div className="results-section">
+          <span className="label-with-help">
+            <span className="expandable-toggle" onClick={() => ui.toggleSection("resource", config.id)}>
+              {`${chevron(resourceExpanded)} Resource Response`}
+            </span>
+            <HelpTip text={helpText("clientConfig.resourceResponse")} />
+          </span>
+          {resourceExpanded && <AuthResponseView state={resourceState} loadingLabel="Calling resource..." />}
+        </div>
+      )}
+      {probeState.kind !== "idle" && (
+        <div className="results-section">
+          <span className="label-with-help">
+            <span className="expandable-toggle" onClick={() => ui.toggleSection("probe", config.id)}>
+              {`${chevron(probeExpanded)} MCP Probe`}
+            </span>
+            <HelpTip text={helpText("clientConfig.probeResult")} />
+          </span>
+          {probeExpanded && <ProbeStateView state={probeState} />}
         </div>
       )}
     </div>

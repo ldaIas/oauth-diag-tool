@@ -23,6 +23,12 @@ export function parseClientConfig(raw: ClientConfig): ParsedClientConfig {
     scopesSupported: raw.scopesSupported,
     refreshToken: raw.refreshToken,
     disabledRefreshParams: parseParamMap(raw.disabledRefreshParams, isBooleanValue),
+    resourceUrl: raw.resourceUrl,
+    mcpUrl: raw.mcpUrl,
+    tokenForMcp: raw.tokenForMcp,
+    registrationMode: raw.registrationMode,
+    tokenAuthMethod: raw.tokenAuthMethod,
+    serveClientMetadata: raw.serveClientMetadata,
   };
 }
 
@@ -42,5 +48,11 @@ export function toClientConfigInput(fields: ClientConfigFields): ClientConfigInp
     disabledTokenParams: serializeParamMap(fields.disabledTokenParams),
     scopesSupported: fields.scopesSupported,
     disabledRefreshParams: serializeParamMap(fields.disabledRefreshParams),
+    resourceUrl: fields.resourceUrl,
+    mcpUrl: fields.mcpUrl,
+    tokenForMcp: fields.tokenForMcp,
+    registrationMode: fields.registrationMode,
+    tokenAuthMethod: fields.tokenAuthMethod,
+    serveClientMetadata: fields.serveClientMetadata,
   };
 }

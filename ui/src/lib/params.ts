@@ -48,6 +48,18 @@ export function serializeParamMap<T extends string | boolean>(map: Readonly<Reco
   return `{${body}}`;
 }
 
+/**
+ * The checkbox names for a param section: the standard params, then `resource` when the config
+ * has a resource URL, then the extra params. An extra `resource` param shares the default's
+ * checkbox (the backend sends one or the other), so it is not listed twice.
+ */
+export function sectionParams(standard: readonly string[], resourceUrl: string, extraKeys: readonly string[]): string[] {
+  if (resourceUrl === "") {
+    return [...standard, ...extraKeys];
+  }
+  return [...standard, "resource", ...extraKeys.filter((key) => key !== "resource")];
+}
+
 /** The backend stores an empty extra-params map as the empty string, not "{}". */
 export function serializeExtraParams(params: Readonly<Record<string, string>>): string {
   return Object.keys(params).length === 0 ? "" : serializeParamMap(params);

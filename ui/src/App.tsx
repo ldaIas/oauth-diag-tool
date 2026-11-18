@@ -8,14 +8,18 @@ import { ServerForm } from "./components/ServerForm";
 import { ServerList } from "./components/ServerList";
 import { useClientConfigListUi } from "./hooks/useClientConfigListUi";
 import { useServerListUi } from "./hooks/useServerListUi";
+import type { DiscoveryStep } from "./bindings";
 import type { MetadataOutcome } from "./lib/authResult";
 import {
   initClientConfigForm,
   initFromEdit,
   applyMetadata,
   initFromImport,
+  metadataSource,
   needsMetadataFetch,
+  sameMetadataSource,
   toConfigInput,
+  type MetadataSource,
   type ClientConfigFormModel,
 } from "./lib/clientConfigForm";
 import { initServerForm, type ServerFormModel } from "./lib/serverForm";
@@ -25,10 +29,20 @@ type LeftPage = { kind: "serverList" } | { kind: "serverCreateForm"; form: Serve
 
 type RightPage =
   | { kind: "clientConfigList" }
-  | { kind: "clientConfigForm"; form: ClientConfigFormModel; metadataError: string | null };
+  | {
+      kind: "clientConfigForm";
+      form: ClientConfigFormModel;
+      metadataError: string | null;
+      /** Requests the last metadata fetch made, shown with its error or result. */
+      discoveryTrace: readonly DiscoveryStep[];
+    };
 
 const SERVER_LIST: LeftPage = { kind: "serverList" };
 const CLIENT_CONFIG_LIST: RightPage = { kind: "clientConfigList" };
+
+function formPage(form: ClientConfigFormModel, metadataError: string | null = null, discoveryTrace: readonly DiscoveryStep[] = []): RightPage {
+  return { kind: "clientConfigForm", form, metadataError, discoveryTrace };
+}
 
 export function App() {
   return (
@@ -59,24 +73,24 @@ function Shell() {
     setRightPage(CLIENT_CONFIG_LIST);
     if (needsMetadataFetch(form)) {
       pendingFormSubmit.current = form;
-      void api.fetchServerMetadata(form.issuerUrl).then(completeFormSubmit);
+      void api.fetchServerMetadata(metadataSource(form)).then(completeFormSubmit);
     } else {
       void api.saveClientConfig(form.editingId, toConfigInput(form));
     }
   }
 
-  function pullMetadata(issuerUrl: string) {
+  function pullMetadata(source: MetadataSource) {
     setPullingMetadata(true);
-    void api.fetchServerMetadata(issuerUrl).then((outcome) => {
+    void api.fetchServerMetadata(source).then((outcome) => {
       setPullingMetadata(false);
-      // Ignore the result if the form was closed or its issuer changed while the fetch was in flight.
+      // Ignore the result if the form was closed or its metadata source changed while the fetch was in flight.
       setRightPage((page) => {
-        if (page.kind !== "clientConfigForm" || page.form.issuerUrl !== issuerUrl) {
+        if (page.kind !== "clientConfigForm" || !sameMetadataSource(metadataSource(page.form), source)) {
           return page;
         }
         return outcome.kind === "failure"
-          ? { ...page, metadataError: `Could not fetch authorization server metadata: ${outcome.error}` }
-          : { ...page, form: applyMetadata(page.form, outcome.metadata), metadataError: null };
+          ? formPage(page.form, `Could not fetch authorization server metadata: ${outcome.error}`, outcome.trace)
+          : formPage(applyMetadata(page.form, outcome.metadata), null, outcome.metadata.trace);
       });
     });
   }
@@ -89,21 +103,11 @@ function Shell() {
     pendingFormSubmit.current = null;
     if (outcome.kind === "failure") {
       // Re-show the form so nothing typed is lost.
-      setRightPage({
-        kind: "clientConfigForm",
-        form: pending,
-        metadataError: `Could not fetch authorization server metadata: ${outcome.error}`,
-      });
+      setRightPage(formPage(pending, `Could not fetch authorization server metadata: ${outcome.error}`, outcome.trace));
       return;
     }
-    const { metadata } = outcome;
     setRightPage(CLIENT_CONFIG_LIST);
-    void api.saveClientConfig(pending.editingId, {
-      ...toConfigInput(pending),
-      authorizationUrl: metadata.authorizationEndpoint,
-      tokenUrl: metadata.tokenEndpoint,
-      scopesSupported: metadata.scopesSupported,
-    });
+    void api.saveClientConfig(pending.editingId, toConfigInput(applyMetadata(pending, outcome.metadata)));
   }
 
   function renderLeftPage() {
@@ -113,7 +117,7 @@ function Shell() {
           <ServerList
             ui={serverListUi}
             onOpenCreateForm={(port) => setLeftPage({ kind: "serverCreateForm", form: initServerForm(port) })}
-            onImportClient={(fields) => setRightPage({ kind: "clientConfigForm", form: initFromImport(fields), metadataError: null })}
+            onImportClient={(fields) => setRightPage(formPage(initFromImport(fields)))}
           />
         );
       case "serverCreateForm":
@@ -138,8 +142,8 @@ function Shell() {
         return (
           <ClientConfigList
             ui={clientConfigListUi}
-            onOpenCreateForm={() => setRightPage({ kind: "clientConfigForm", form: initClientConfigForm(), metadataError: null })}
-            onEditConfig={(config) => setRightPage({ kind: "clientConfigForm", form: initFromEdit(config), metadataError: null })}
+            onOpenCreateForm={() => setRightPage(formPage(initClientConfigForm()))}
+            onEditConfig={(config) => setRightPage(formPage(initFromEdit(config)))}
           />
         );
       case "clientConfigForm":
@@ -147,9 +151,10 @@ function Shell() {
           <ClientConfigForm
             model={rightPage.form}
             metadataError={rightPage.metadataError}
+            discoveryTrace={rightPage.discoveryTrace}
             pullingMetadata={pullingMetadata}
-            onPullMetadata={() => pullMetadata(rightPage.form.issuerUrl)}
-            onChange={(form) => setRightPage({ kind: "clientConfigForm", form, metadataError: rightPage.metadataError })}
+            onPullMetadata={() => pullMetadata(metadataSource(rightPage.form))}
+            onChange={(form) => setRightPage(formPage(form, rightPage.metadataError, rightPage.discoveryTrace))}
             onSubmit={submitClientConfigForm}
             onCancel={() => setRightPage(CLIENT_CONFIG_LIST)}
           />

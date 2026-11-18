@@ -18,7 +18,11 @@ const SCHEMA: &str = "
         redirect_url_override TEXT NOT NULL DEFAULT '',
         access_token_expiry INTEGER NOT NULL DEFAULT 3600,
         refresh_token_expiry INTEGER NOT NULL DEFAULT 86400,
-        user_based INTEGER NOT NULL DEFAULT 0
+        user_based INTEGER NOT NULL DEFAULT 0,
+        cimd_enabled INTEGER NOT NULL DEFAULT 1,
+        dcr_enabled INTEGER NOT NULL DEFAULT 1,
+        cimd_allow_http INTEGER NOT NULL DEFAULT 0,
+        mcp_enabled INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS auth_server_clients (
@@ -26,6 +30,10 @@ const SCHEMA: &str = "
         client_id TEXT NOT NULL,
         client_secret TEXT NOT NULL,
         auth_server_id INTEGER NOT NULL,
+        client_name TEXT NOT NULL DEFAULT '',
+        redirect_uris TEXT NOT NULL DEFAULT '[]',
+        token_endpoint_auth_method TEXT NOT NULL DEFAULT 'client_secret_basic',
+        registration TEXT NOT NULL DEFAULT 'manual',
         FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
         UNIQUE (auth_server_id, client_id)
     );
@@ -55,7 +63,13 @@ const SCHEMA: &str = "
         disabled_token_params TEXT NOT NULL DEFAULT '{}',
         scopes_supported TEXT NOT NULL DEFAULT '',
         refresh_token TEXT NOT NULL DEFAULT '',
-        disabled_refresh_params TEXT NOT NULL DEFAULT '{}'
+        disabled_refresh_params TEXT NOT NULL DEFAULT '{}',
+        resource_url TEXT NOT NULL DEFAULT '',
+        registration_mode TEXT NOT NULL DEFAULT 'preregistered',
+        token_auth_method TEXT NOT NULL DEFAULT 'none',
+        serve_client_metadata INTEGER NOT NULL DEFAULT 0,
+        mcp_url TEXT NOT NULL DEFAULT '',
+        token_for_mcp INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS schema_version (
@@ -85,6 +99,20 @@ const MIGRATIONS: &[(i64, &str)] = &[
         FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
         UNIQUE (auth_server_id, username)
     );"),
+    (12, "ALTER TABLE oauth_client_configs ADD COLUMN resource_url TEXT NOT NULL DEFAULT '';"),
+    (13, "ALTER TABLE server_configs ADD COLUMN cimd_enabled INTEGER NOT NULL DEFAULT 1;
+          ALTER TABLE server_configs ADD COLUMN dcr_enabled INTEGER NOT NULL DEFAULT 1;
+          ALTER TABLE server_configs ADD COLUMN cimd_allow_http INTEGER NOT NULL DEFAULT 0;"),
+    (14, "ALTER TABLE auth_server_clients ADD COLUMN client_name TEXT NOT NULL DEFAULT '';
+          ALTER TABLE auth_server_clients ADD COLUMN redirect_uris TEXT NOT NULL DEFAULT '[]';
+          ALTER TABLE auth_server_clients ADD COLUMN token_endpoint_auth_method TEXT NOT NULL DEFAULT 'client_secret_basic';
+          ALTER TABLE auth_server_clients ADD COLUMN registration TEXT NOT NULL DEFAULT 'manual';"),
+    (15, "ALTER TABLE oauth_client_configs ADD COLUMN registration_mode TEXT NOT NULL DEFAULT 'preregistered';
+          ALTER TABLE oauth_client_configs ADD COLUMN token_auth_method TEXT NOT NULL DEFAULT 'none';
+          ALTER TABLE oauth_client_configs ADD COLUMN serve_client_metadata INTEGER NOT NULL DEFAULT 0;"),
+    (16, "ALTER TABLE server_configs ADD COLUMN mcp_enabled INTEGER NOT NULL DEFAULT 0;"),
+    (17, "ALTER TABLE oauth_client_configs ADD COLUMN mcp_url TEXT NOT NULL DEFAULT '';
+          ALTER TABLE oauth_client_configs ADD COLUMN token_for_mcp INTEGER NOT NULL DEFAULT 0;"),
 ];
 
 const LATEST_VERSION: i64 = MIGRATIONS[MIGRATIONS.len() - 1].0;
@@ -250,7 +278,7 @@ mod tests {
     #[test]
     fn latest_version_reflects_last_migration() {
         // Pins the intentional version-2 gap: last entry decides, not array length.
-        assert_eq!(LATEST_VERSION, 11);
+        assert_eq!(LATEST_VERSION, 17);
     }
 
     #[test]
@@ -331,6 +359,7 @@ mod tests {
                 FOREIGN KEY (auth_server_id) REFERENCES server_configs(id) ON DELETE CASCADE,
                 UNIQUE (auth_server_id, client_id)
              );
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
              CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
              INSERT INTO schema_version (id, version) VALUES (1, 9);
              INSERT INTO server_configs (config_name, auth_server_url, token_url)
@@ -361,6 +390,163 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM server_users", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0);
+    }
+
+    #[test]
+    fn upgrade_from_version_eleven_adds_resource_url() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL
+             );
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 11);
+             INSERT INTO oauth_client_configs (name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let resource_url: String = conn
+            .query_row("SELECT resource_url FROM oauth_client_configs WHERE name = 'old'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(resource_url, "");
+    }
+
+    #[test]
+    fn upgrade_from_version_twelve_adds_client_metadata_settings() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, config_name TEXT NOT NULL);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 12);
+             INSERT INTO server_configs (config_name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let (cimd, dcr, allow_http): (i64, i64, i64) = conn
+            .query_row(
+                "SELECT cimd_enabled, dcr_enabled, cimd_allow_http FROM server_configs WHERE config_name = 'old'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!((cimd, dcr, allow_http), (1, 1, 0));
+    }
+
+    #[test]
+    fn upgrade_from_version_thirteen_adds_client_registration_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE auth_server_clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id TEXT NOT NULL,
+                client_secret TEXT NOT NULL,
+                auth_server_id INTEGER NOT NULL
+             );
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 13);
+             INSERT INTO auth_server_clients (client_id, client_secret, auth_server_id) VALUES ('c', 's', 1);",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let row: (String, String, String, String) = conn
+            .query_row(
+                "SELECT client_name, redirect_uris, token_endpoint_auth_method, registration FROM auth_server_clients",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row,
+            ("".to_string(), "[]".to_string(), "client_secret_basic".to_string(), "manual".to_string())
+        );
+    }
+
+    #[test]
+    fn upgrade_from_version_fourteen_adds_client_registration_settings() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 14);
+             INSERT INTO oauth_client_configs (name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let row: (String, String, i64) = conn
+            .query_row(
+                "SELECT registration_mode, token_auth_method, serve_client_metadata FROM oauth_client_configs WHERE name = 'old'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(row, ("preregistered".to_string(), "none".to_string(), 0));
+    }
+
+    #[test]
+    fn upgrade_from_version_sixteen_adds_the_client_mcp_url() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 16);
+             INSERT INTO oauth_client_configs (name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let row: (String, i64) = conn
+            .query_row("SELECT mcp_url, token_for_mcp FROM oauth_client_configs WHERE name = 'old'", [], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(row, (String::new(), 0));
+    }
+
+    #[test]
+    fn upgrade_from_version_fifteen_adds_the_mcp_setting() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE server_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, config_name TEXT NOT NULL);
+             CREATE TABLE auth_server_clients (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE oauth_client_configs (id INTEGER PRIMARY KEY AUTOINCREMENT);
+             CREATE TABLE schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL);
+             INSERT INTO schema_version (id, version) VALUES (1, 15);
+             INSERT INTO server_configs (config_name) VALUES ('old');",
+        )
+        .unwrap();
+
+        init_connection(&conn).unwrap();
+
+        assert_eq!(schema_version(&conn), LATEST_VERSION);
+        let mcp_enabled: i64 = conn
+            .query_row("SELECT mcp_enabled FROM server_configs WHERE config_name = 'old'", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(mcp_enabled, 0);
     }
 
     #[test]

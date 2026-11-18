@@ -1,8 +1,9 @@
 // Copyright 2026 Sam Sovereign
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ServerMetadataResponse } from "../bindings";
+import type { RegistrationMode, ResourceKind, ServerMetadataResponse, TokenAuthMethod } from "../bindings";
 import { sortedEntries } from "./params";
+import { credentialStyle, registrationSupport, type CredentialStyle, type RegistrationResult, type RegistrationSupport } from "./registration";
 import type { ClientConfigFields, ParsedClientConfig } from "./types";
 
 export interface ExtraParamRow {
@@ -26,9 +27,41 @@ export interface ClientConfigFormModel {
   disabledTokenParams: Record<string, boolean>;
   scopesSupported: string;
   disabledRefreshParams: Record<string, boolean>;
+  resourceUrl: string;
+  mcpUrl: string;
+  tokenForMcp: boolean;
+  /** The URL the user chose to discover OAuth from; null leaves the choice to `metadataSource`. */
+  discoverFrom: ResourceKind | null;
+  registrationMode: RegistrationMode;
+  tokenAuthMethod: TokenAuthMethod;
+  serveClientMetadata: boolean;
+  /** What the last metadata fetch said about registration; null until metadata has been pulled in this form. */
+  registration: RegistrationSupport | null;
   useServerMetadata: boolean;
-  /** Issuer URL whose metadata filled the endpoint fields via "Pull Now"; null when nothing has been pulled. */
-  pulledIssuerUrl: string | null;
+  /** What the last "Pull Now" fetched metadata from; null when nothing has been pulled. */
+  pulledFrom: MetadataSource | null;
+}
+
+/** The inputs that decide which metadata is fetched; the issuer only matters when `resourceUrl` is empty. */
+export interface MetadataSource {
+  issuerUrl: string;
+  /** The resource or MCP URL discovery starts from. */
+  resourceUrl: string;
+  resourceKind: ResourceKind;
+}
+
+interface TargetUrls {
+  resourceUrl: string;
+  mcpUrl: string;
+}
+
+/** The fields discovery fills in; shared by the form model and saved configs. */
+interface MetadataTarget {
+  issuerUrl: string;
+  authorizationUrl: string;
+  tokenUrl: string;
+  scopes: string;
+  scopesSupported: string;
 }
 
 export interface ImportedClientFields {
@@ -56,8 +89,16 @@ export function initClientConfigForm(): ClientConfigFormModel {
     disabledTokenParams: {},
     scopesSupported: "",
     disabledRefreshParams: {},
+    resourceUrl: "",
+    mcpUrl: "",
+    tokenForMcp: false,
+    discoverFrom: null,
+    registrationMode: "preregistered",
+    tokenAuthMethod: "none",
+    serveClientMetadata: false,
+    registration: null,
     useServerMetadata: false,
-    pulledIssuerUrl: null,
+    pulledFrom: null,
   };
 }
 
@@ -89,27 +130,152 @@ export function initFromEdit(config: ParsedClientConfig): ClientConfigFormModel 
     disabledTokenParams: config.disabledTokenParams,
     scopesSupported: config.scopesSupported,
     disabledRefreshParams: config.disabledRefreshParams,
+    resourceUrl: config.resourceUrl,
+    mcpUrl: config.mcpUrl,
+    tokenForMcp: config.tokenForMcp,
+    discoverFrom: null,
+    registrationMode: config.registrationMode,
+    tokenAuthMethod: config.tokenAuthMethod,
+    serveClientMetadata: config.serveClientMetadata,
+    registration: null,
     useServerMetadata: false,
-    pulledIssuerUrl: null,
+    pulledFrom: null,
   };
 }
 
-/** True when saving must fetch metadata because the form does not already hold the current issuer's. */
-export function needsMetadataFetch(form: ClientConfigFormModel): boolean {
-  return form.useServerMetadata && form.pulledIssuerUrl !== form.issuerUrl;
+function targetUrl(urls: TargetUrls, kind: ResourceKind): string {
+  return (kind === "mcp" ? urls.mcpUrl : urls.resourceUrl).trim();
 }
 
-export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetadataResponse): ClientConfigFormModel {
+/** Discovery starts at the preferred URL when it is set, then the resource URL, the MCP URL, and finally the issuer. */
+export function metadataSourceFor(config: TargetUrls & { issuerUrl: string }, preferred: ResourceKind | null): MetadataSource {
+  const order: ResourceKind[] = preferred === "mcp" ? ["mcp", "resource"] : ["resource", "mcp"];
+  const resourceKind = order.find((kind) => targetUrl(config, kind) !== "");
+  return resourceKind === undefined
+    ? { issuerUrl: config.issuerUrl, resourceUrl: "", resourceKind: "resource" }
+    : { issuerUrl: config.issuerUrl, resourceUrl: targetUrl(config, resourceKind), resourceKind };
+}
+
+export function metadataSource(form: ClientConfigFormModel): MetadataSource {
+  return metadataSourceFor(form, form.discoverFrom);
+}
+
+/** The URL the form is set to discover OAuth from, when that URL is filled in; the issuer is then an output. */
+export function activeDiscoverFrom(form: ClientConfigFormModel): ResourceKind | null {
+  return form.useServerMetadata && form.discoverFrom !== null && targetUrl(form, form.discoverFrom) !== "" ? form.discoverFrom : null;
+}
+
+/** Discovering from a URL is server metadata with a chosen starting point, so the two settings move together. */
+export function toggleDiscoverFrom(form: ClientConfigFormModel, kind: ResourceKind): ClientConfigFormModel {
+  return activeDiscoverFrom(form) === kind
+    ? { ...form, discoverFrom: null, useServerMetadata: false }
+    : { ...form, discoverFrom: kind, useServerMetadata: true };
+}
+
+export function toggleServerMetadata(form: ClientConfigFormModel): ClientConfigFormModel {
+  return { ...form, useServerMetadata: !form.useServerMetadata, discoverFrom: null };
+}
+
+/** The URL tokens are requested for, matching `token_resource` in the backend. */
+export function tokenResourceUrl(config: TargetUrls & { tokenForMcp: boolean }): string {
+  return config.mcpUrl !== "" && (config.tokenForMcp || config.resourceUrl === "") ? config.mcpUrl : config.resourceUrl;
+}
+
+export function sameMetadataSource(a: MetadataSource, b: MetadataSource): boolean {
+  return a.issuerUrl === b.issuerUrl && a.resourceUrl === b.resourceUrl && a.resourceKind === b.resourceKind;
+}
+
+/** True when the form can fetch metadata: discovery needs a resource, MCP or issuer URL to start from. */
+export function canFetchMetadata(source: MetadataSource): boolean {
+  return source.resourceUrl.trim() !== "" || source.issuerUrl.trim() !== "";
+}
+
+/** True when saving must fetch metadata because the form does not already hold the current source's. */
+export function needsMetadataFetch(form: ClientConfigFormModel): boolean {
+  return form.useServerMetadata && (form.pulledFrom === null || !sameMetadataSource(form.pulledFrom, metadataSource(form)));
+}
+
+/**
+ * Fills the issuer and endpoints from fetched metadata. Scopes the user already typed are kept;
+ * an empty scopes field takes the scope the resource's challenge asked for, if any.
+ */
+export function mergeMetadata<T extends MetadataTarget>(target: T, metadata: ServerMetadataResponse): T {
   return {
-    ...form,
+    ...target,
+    issuerUrl: metadata.issuerUrl,
     authorizationUrl: metadata.authorizationEndpoint,
     tokenUrl: metadata.tokenEndpoint,
     scopesSupported: metadata.scopesSupported,
-    pulledIssuerUrl: form.issuerUrl,
+    scopes: target.scopes === "" ? metadata.challengeScope : target.scopes,
   };
 }
 
-/** Rows with an empty key are dropped; for duplicate keys the later row wins. */
+export function applyMetadata(form: ClientConfigFormModel, metadata: ServerMetadataResponse): ClientConfigFormModel {
+  const merged = mergeMetadata(form, metadata);
+  return {
+    ...merged,
+    registration: registrationSupport(metadata),
+    pulledFrom: metadataSource(merged),
+  };
+}
+
+export function formCredentialStyle(form: ClientConfigFormModel): CredentialStyle {
+  return credentialStyle(form.registrationMode, form.tokenAuthMethod);
+}
+
+/** True when the form can ask a discovered registration endpoint to register this client. */
+export function canRegister(form: ClientConfigFormModel): boolean {
+  return form.registration !== null && form.registration.registrationEndpoint !== "" && form.name.trim() !== "";
+}
+
+/**
+ * Takes the client a registration endpoint issued. The method the server confirmed wins over the
+ * one requested, since it decides whether a secret is sent; a public client keeps no secret.
+ */
+export function applyRegistration(
+  form: ClientConfigFormModel,
+  registered: Extract<RegistrationResult, { kind: "registered" }>,
+): ClientConfigFormModel {
+  return {
+    ...form,
+    clientId: registered.clientId,
+    clientSecret: registered.clientSecret,
+    tokenAuthMethod: registered.tokenAuthMethod ?? form.tokenAuthMethod,
+  };
+}
+
+/**
+ * Switches the registration mode. CIMD starts out serving its document locally, and a local
+ * document URL does not carry over to a mode where it means nothing.
+ */
+export function withRegistrationMode(form: ClientConfigFormModel, mode: RegistrationMode, localUrl: string | null): ClientConfigFormModel {
+  if (mode === form.registrationMode) {
+    return form;
+  }
+  return {
+    ...form,
+    registrationMode: mode,
+    serveClientMetadata: mode === "cimd",
+    clientId: form.clientId === localUrl ? "" : form.clientId,
+  };
+}
+
+/** Turning local serving off leaves the client ID for the user to fill, without the local URL in it. */
+export function toggleServeLocally(form: ClientConfigFormModel, localUrl: string | null): ClientConfigFormModel {
+  const serveClientMetadata = !form.serveClientMetadata;
+  return {
+    ...form,
+    serveClientMetadata,
+    clientId: !serveClientMetadata && form.clientId === localUrl ? "" : form.clientId,
+  };
+}
+
+/** The client ID a CIMD config will use. Empty for a locally served config that has no id yet; the backend sets it on save. */
+export function cimdClientId(form: ClientConfigFormModel, localUrl: string | null): string {
+  return form.serveClientMetadata ? (localUrl ?? "") : form.clientId;
+}
+
+/** Rows with an empty key are dropped; for duplicate keys the later row wins. The resource and MCP URLs are trimmed so blank means none. */
 export function toConfigInput(form: ClientConfigFormModel): ClientConfigFields {
   return {
     name: form.name,
@@ -129,6 +295,12 @@ export function toConfigInput(form: ClientConfigFormModel): ClientConfigFields {
     disabledTokenParams: form.disabledTokenParams,
     scopesSupported: form.scopesSupported,
     disabledRefreshParams: form.disabledRefreshParams,
+    resourceUrl: form.resourceUrl.trim(),
+    mcpUrl: form.mcpUrl.trim(),
+    tokenForMcp: form.tokenForMcp,
+    registrationMode: form.registrationMode,
+    tokenAuthMethod: form.tokenAuthMethod,
+    serveClientMetadata: form.serveClientMetadata,
   };
 }
 

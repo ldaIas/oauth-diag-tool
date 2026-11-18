@@ -49,6 +49,31 @@ export function ServerSettingsForm({ edit, saved, onEdit, onSave }: ServerSettin
       <div className="settings-hint">
         When on, /authorize shows a login page where a user signs in or creates an account, and tokens carry that user.
       </div>
+      <label className="settings-checkbox">
+        <input type="checkbox" checked={edit.cimdEnabled} onChange={(e) => onEdit({ cimdEnabled: e.target.checked })} />
+        <span className="detail-label">Client ID metadata documents</span>
+        <HelpTip text={helpText("serverSettings.cimdEnabled")} />
+      </label>
+      <label className="settings-checkbox settings-checkbox-nested">
+        <input
+          type="checkbox"
+          checked={edit.cimdAllowHttp}
+          disabled={!edit.cimdEnabled}
+          onChange={(e) => onEdit({ cimdAllowHttp: e.target.checked })}
+        />
+        <span className="detail-label">Allow http client ID URLs on localhost</span>
+        <HelpTip text={helpText("serverSettings.cimdAllowHttp")} />
+      </label>
+      <label className="settings-checkbox">
+        <input type="checkbox" checked={edit.dcrEnabled} onChange={(e) => onEdit({ dcrEnabled: e.target.checked })} />
+        <span className="detail-label">Dynamic client registration</span>
+        <HelpTip text={helpText("serverSettings.dcrEnabled")} />
+      </label>
+      <label className="settings-checkbox">
+        <input type="checkbox" checked={edit.mcpEnabled} onChange={(e) => onEdit({ mcpEnabled: e.target.checked })} />
+        <span className="detail-label">MCP endpoint</span>
+        <HelpTip text={helpText("serverSettings.mcpEnabled")} />
+      </label>
       <div className="settings-actions">
         {saved && <span className="settings-saved-label">{"\u{2713} Saved"}</span>}
         <button className="btn-save-settings" disabled={saved} onClick={onSave}>

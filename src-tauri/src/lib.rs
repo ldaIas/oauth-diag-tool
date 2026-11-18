@@ -3,12 +3,18 @@
 
 //! Tauri command definitions and app setup. Commands are thin wrappers that
 //! lock the shared state (DB connection, running servers, pending
-//! authorizations) and delegate to the `auth_server`, `auth_client`, and `db`
-//! modules. New commands must also be listed in `permissions/default.toml`.
+//! authorizations) and delegate to the `auth_server`, `auth_client`, `discovery`,
+//! and `db` modules. New commands must also be listed in `permissions/default.toml`.
 
 mod auth_client;
 mod auth_server;
+mod cimd;
+mod client_registration;
 mod db;
+mod dcr;
+mod discovery;
+mod mcp;
+mod mcp_probe;
 mod oauth_server;
 
 use tauri::Manager;
@@ -119,13 +125,10 @@ fn delete_client_config(
 fn update_server_settings(
     state: tauri::State<'_, Arc<Mutex<Connection>>>,
     id: i64,
-    redirect_url_override: String,
-    access_token_expiry: i64,
-    refresh_token_expiry: i64,
-    user_based: bool,
+    settings: auth_server::ServerSettingsInput,
 ) -> Result<(), String> {
     let conn = state.lock().map_err(|e| e.to_string())?;
-    auth_server::update_settings(&conn, id, &redirect_url_override, access_token_expiry, refresh_token_expiry, user_based)
+    auth_server::update_settings(&conn, id, &settings)
 }
 
 #[tauri::command]
@@ -258,16 +261,9 @@ async fn refresh_token(
         let disabled_refresh = auth_client::lookup_disabled_refresh_params(&conn, id)?;
         (config, refresh_tok, disabled_refresh)
     };
+    let resource = auth_client::refresh_resource_param(&config, &disabled_refresh);
 
-    let result = auth_client::refresh_token_flow(
-        config.token_url,
-        config.client_id,
-        config.client_secret,
-        refresh_tok,
-        config.scopes,
-        disabled_refresh,
-    )
-    .await;
+    let result = auth_client::refresh_token_flow(&config, refresh_tok, resource, disabled_refresh).await;
 
     // If the response contains a new refresh_token, save it (token rotation)
     if let Ok(ref auth_resp) = result {
@@ -295,8 +291,82 @@ fn cancel_authorization(
 #[specta::specta]
 async fn fetch_server_metadata(
     issuer_url: String,
-) -> Result<auth_client::ServerMetadataResponse, String> {
-    auth_client::fetch_server_metadata(&issuer_url).await
+    resource_url: String,
+    resource_kind: discovery::ResourceKind,
+) -> Result<discovery::ServerMetadataResponse, discovery::DiscoveryFailure> {
+    discovery::discover(&resource_url, resource_kind, &issuer_url).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn call_resource(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+    access_token: String,
+) -> Result<auth_client::AuthResponse, String> {
+    log::info!("call_resource called: id={}", id);
+    let resource_url = {
+        let conn = state.lock().map_err(|e| e.to_string())?;
+        auth_client::lookup_config(&conn, id)?.resource_url
+    };
+    auth_client::call_resource(&resource_url, &access_token).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn probe_mcp(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+    access_token: String,
+) -> Result<mcp_probe::ProbeReport, String> {
+    log::info!("probe_mcp called: id={}", id);
+    let mcp_url = {
+        let conn = state.lock().map_err(|e| e.to_string())?;
+        auth_client::lookup_config(&conn, id)?.mcp_url
+    };
+    mcp_probe::probe(&mcp_url, &access_token).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn register_client(
+    registration_endpoint: String,
+    client_name: String,
+    scopes: String,
+    token_auth_method: client_registration::TokenAuthMethod,
+) -> Result<auth_client::AuthResponse, String> {
+    log::info!("register_client called: endpoint={}", registration_endpoint);
+    let body = client_registration::registration_request(
+        &client_name,
+        &auth_client::callback_url(),
+        token_auth_method,
+        &scopes,
+    );
+    client_registration::register_client(&registration_endpoint, &body).await
+}
+
+#[tauri::command]
+#[specta::specta]
+async fn verify_client_document(
+    state: tauri::State<'_, Arc<Mutex<Connection>>>,
+    id: i64,
+) -> Result<Vec<client_registration::CheckResult>, String> {
+    log::info!("verify_client_document called: id={}", id);
+    let config = {
+        let conn = state.lock().map_err(|e| e.to_string())?;
+        auth_client::lookup_config(&conn, id)?
+    };
+    if config.registration_mode != client_registration::RegistrationMode::Cimd {
+        return Err("This configuration does not use a client metadata document".to_string());
+    }
+    let subject = client_registration::DocumentSubject {
+        config_id: config.id,
+        client_id: &config.client_id,
+        client_name: &config.name,
+        scopes: &config.scopes,
+        serve_locally: config.serve_client_metadata,
+    };
+    Ok(client_registration::verify_client_document(&subject).await)
 }
 
 /// Single source for the command list and event types, shared by the invoke
@@ -324,10 +394,16 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             refresh_token,
             cancel_authorization,
             fetch_server_metadata,
+            call_resource,
+            probe_mcp,
+            register_client,
+            verify_client_document,
         ])
         .events(tauri_specta::collect_events![
             oauth_server::ResourceAccessInfo,
-            oauth_server::ServerUsersChanged
+            oauth_server::ServerUsersChanged,
+            oauth_server::ServerClientsChanged,
+            oauth_server::ClientMetadataFetched
         ])
         // The only i64s crossing the bridge are SQLite row IDs and token expiries
         // in seconds, far below 2^53.

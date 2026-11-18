@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, test } from "vitest";
-import { extractRefreshToken, prettyPrintBody, toAuthOutcome, toMetadataOutcome } from "./authResult";
+import { allChecksPassed, extractRefreshToken, prettyPrintBody, toAuthOutcome, toMetadataOutcome, toVerifyOutcome } from "./authResult";
 
 describe("toAuthOutcome", () => {
   test("maps the error arm to a failure", () => {
@@ -48,17 +48,50 @@ describe("prettyPrintBody", () => {
 
 describe("toMetadataOutcome", () => {
   test("maps the error arm to a failure", () => {
-    expect(toMetadataOutcome({ status: "error", error: "unreachable" })).toEqual({ kind: "failure", error: "unreachable" });
+    const trace = [{ url: "http://localhost:9500/x", status: 404, outcome: "not available" }];
+    expect(toMetadataOutcome({ status: "error", error: { error: "unreachable", trace } })).toEqual({
+      kind: "failure",
+      error: "unreachable",
+      trace,
+    });
   });
 
   test("maps the success arm", () => {
     const metadata = {
       body: "{}",
+      resourceMetadata: "",
+      issuerUrl: "http://localhost:9500",
       authorizationEndpoint: "http://localhost:9500/authorize",
       tokenEndpoint: "http://localhost:9500/token",
+      registrationEndpoint: "",
+      clientIdMetadataDocumentSupported: false,
+      tokenEndpointAuthMethodsSupported: "",
       scopesSupported: "openid",
+      challengeScope: "",
+      trace: [{ url: "http://localhost:9500/.well-known/oauth-authorization-server", status: 200, outcome: "found" }],
     };
     expect(toMetadataOutcome({ status: "ok", data: metadata })).toEqual({ kind: "success", metadata });
+  });
+});
+
+describe("toVerifyOutcome", () => {
+  test("maps the error arm to a failure", () => {
+    expect(toVerifyOutcome({ status: "error", error: "no such config" })).toEqual({ kind: "failure", error: "no such config" });
+  });
+
+  test("keeps the checks in order", () => {
+    const checks = [
+      { passed: true, message: "fetched" },
+      { passed: false, message: "redirect missing" },
+    ];
+    expect(toVerifyOutcome({ status: "ok", data: checks })).toEqual({ kind: "success", checks });
+  });
+});
+
+describe("allChecksPassed", () => {
+  test("is true only when every check passed", () => {
+    expect(allChecksPassed([{ passed: true, message: "a" }])).toBe(true);
+    expect(allChecksPassed([{ passed: true, message: "a" }, { passed: false, message: "b" }])).toBe(false);
   });
 });
 

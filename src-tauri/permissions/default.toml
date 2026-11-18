@@ -1,6 +1,6 @@
 [default]
 description = "Default app permissions - allows all custom commands"
-permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-add-user-to-server", "allow-update-user", "allow-delete-user", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-refresh-token", "allow-cancel-authorization", "allow-fetch-server-metadata"]
+permissions = ["allow-create-server-config", "allow-get-server-configs", "allow-delete-server-config", "allow-add-client-to-server", "allow-delete-client", "allow-get-client-configs", "allow-create-client-config", "allow-update-client-config", "allow-delete-client-config", "allow-update-server-settings", "allow-add-user-to-server", "allow-update-user", "allow-delete-user", "allow-start-server", "allow-stop-server", "allow-get-callback-url", "allow-authorize-client", "allow-refresh-token", "allow-cancel-authorization", "allow-fetch-server-metadata", "allow-call-resource", "allow-probe-mcp", "allow-register-client", "allow-verify-client-document"]
 
 [[permission]]
 identifier = "allow-create-server-config"
@@ -101,3 +101,23 @@ commands.allow = ["update_user"]
 identifier = "allow-delete-user"
 description = "Allow deleting server users"
 commands.allow = ["delete_user"]
+
+[[permission]]
+identifier = "allow-call-resource"
+description = "Allow calling a client configuration's protected resource with an access token"
+commands.allow = ["call_resource"]
+
+[[permission]]
+identifier = "allow-probe-mcp"
+description = "Allow probing a client configuration's MCP endpoint with an access token"
+commands.allow = ["probe_mcp"]
+
+[[permission]]
+identifier = "allow-register-client"
+description = "Allow registering a client with an authorization server's dynamic registration endpoint"
+commands.allow = ["register_client"]
+
+[[permission]]
+identifier = "allow-verify-client-document"
+description = "Allow verifying a client configuration's client ID metadata document"
+commands.allow = ["verify_client_document"]
