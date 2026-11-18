@@ -2394,7 +2394,7 @@ dependencies = [
 
 [[package]]
 name = "oauth-diagnostic-tool"
-version = "0.0.6"
+version = "0.1.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
