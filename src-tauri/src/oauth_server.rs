@@ -457,9 +457,9 @@ async fn resolve_authorize_client(
     client_id: &str,
     redirect_uri: &str,
     code_challenge: &str,
-) -> Result<(ClientKind, ClientDisplay), Response> {
+) -> Result<(ClientKind, ClientDisplay), Box<Response>> {
     let reject = |title: &str, message: &str| {
-        error_page(StatusCode::BAD_REQUEST, title, message, &[("Client ID", client_id), ("Redirect URI", redirect_uri)])
+        Box::new(error_page(StatusCode::BAD_REQUEST, title, message, &[("Client ID", client_id), ("Redirect URI", redirect_uri)]))
     };
 
     let ineligible_reason = match cimd::classify_client_id(client_id, state.cimd_allow_http) {
@@ -487,12 +487,12 @@ async fn resolve_authorize_client(
         ClientIdKind::NotAUrl => None,
     };
 
-    let Some(row) = lookup_registered_client(state, client_id).map_err(IntoResponse::into_response)? else {
+    let Some(row) = lookup_registered_client(state, client_id).map_err(|e| Box::new(e.into_response()))? else {
         let description = match ineligible_reason {
             Some(reason) => format!("Unknown client_id; as a metadata document URL it is not usable: {}", reason),
             None => "Unknown client_id".to_string(),
         };
-        return Err(json_error(StatusCode::UNAUTHORIZED, "invalid_client", &description));
+        return Err(Box::new(json_error(StatusCode::UNAUTHORIZED, "invalid_client", &description)));
     };
 
     if !row.redirect_uris.is_empty() && !row.redirect_uris.iter().any(|registered| registered == redirect_uri) {
@@ -559,7 +559,7 @@ async fn authorize_endpoint(
 
     let (_, client) = match resolve_authorize_client(&state, client_id, redirect_uri, code_challenge).await {
         Ok(resolved) => resolved,
-        Err(response) => return response,
+        Err(response) => return *response,
     };
 
     let redirect_target = effective_redirect_uri(&state, redirect_uri);
@@ -756,7 +756,7 @@ async fn authorize_submit(
     // against them rather than trusting them.
     let client = match resolve_authorize_client(&state, &client_id, &client_redirect_uri, &code_challenge).await {
         Ok((_, client)) => client,
-        Err(response) => return Ok(response),
+        Err(response) => return Ok(*response),
     };
 
     let redirect_uri = effective_redirect_uri(&state, &client_redirect_uri).to_string();
