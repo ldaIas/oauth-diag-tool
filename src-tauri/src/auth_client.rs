@@ -375,13 +375,13 @@ pub async fn authorize_client_credentials(config: ResolvedClientConfig) -> Resul
         params.push(("resource".to_string(), resource));
     }
 
-    for (k, v) in config.extra_params {
-        if !disabled.contains(&k) {
-            params.push((k, v));
+    for (k, v) in &config.extra_params {
+        if !disabled.contains(k) {
+            params.push((k.clone(), v.clone()));
         }
     }
 
-    post_token_request(&config.token_url, &TokenRequest { params, basic: credentials.basic }).await
+    post_with_local_document(&config, &TokenRequest { params, basic: credentials.basic }).await
 }
 
 /// Posts a form to the token endpoint and reports whatever comes back, errors included.
@@ -571,18 +571,25 @@ fn local_client_document(config: &ResolvedClientConfig) -> Option<LocalDocument>
 }
 
 fn callback_router(state: CallbackState) -> AxumRouter {
+    let document = state.client_document.clone();
     AxumRouter::new()
         .route("/start", axum_get(trampoline_handler))
         .route("/callback", axum_get(callback_handler))
-        .route("/client-metadata/:id", axum_get(client_metadata_handler))
         .with_state(state)
+        .merge(document_router(document))
+}
+
+fn document_router(document: Option<LocalDocument>) -> AxumRouter {
+    AxumRouter::new()
+        .route("/client-metadata/:id", axum_get(client_metadata_handler))
+        .with_state(document)
 }
 
 async fn client_metadata_handler(
-    AxumState(state): AxumState<CallbackState>,
+    AxumState(document): AxumState<Option<LocalDocument>>,
     Path(id): Path<i64>,
 ) -> Response {
-    match state.client_document {
+    match document {
         Some(doc) if doc.config_id == id => (
             [
                 (header::CONTENT_TYPE, "application/json"),
@@ -730,7 +737,41 @@ pub async fn refresh_token_flow(
         params.push(("resource".to_string(), resource));
     }
 
-    post_token_request(&config.token_url, &TokenRequest { params, basic: credentials.basic }).await
+    post_with_local_document(config, &TokenRequest { params, basic: credentials.basic }).await
+}
+
+/// Posts a token request that happens outside an authorization flow, when no callback listener
+/// is up. The server authenticates a metadata-document client by fetching its document, so a
+/// locally served one has to be reachable for the length of the request.
+async fn post_with_local_document(config: &ResolvedClientConfig, request: &TokenRequest) -> Result<AuthResponse, String> {
+    let post = post_token_request(&config.token_url, request);
+    let Some(document) = local_client_document(config) else {
+        return post.await;
+    };
+    let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", CALLBACK_PORT))
+        .await
+        .map_err(|e| format!("Could not serve the client metadata document on port {} (is an authorization running?): {}", CALLBACK_PORT, e))?;
+    while_serving_document(listener, document, post).await
+}
+
+async fn while_serving_document<F: std::future::Future>(
+    listener: tokio::net::TcpListener,
+    document: LocalDocument,
+    work: F,
+) -> F::Output {
+    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, document_router(Some(document)))
+            .with_graceful_shutdown(async {
+                let _ = shutdown_rx.await;
+            })
+            .await
+            .ok();
+    });
+    let output = work.await;
+    let _ = shutdown_tx.send(());
+    let _ = server.await;
+    output
 }
 
 /// GETs the config's resource URL with the access token, reporting whatever the resource
@@ -1303,6 +1344,21 @@ mod tests {
         assert_eq!(body["client_name"], "Doc Client");
 
         assert_eq!(reqwest::get(format!("{base}/client-metadata/6")).await.unwrap().status(), 404);
+    }
+
+    #[tokio::test]
+    async fn the_document_is_served_during_the_work_and_gone_afterwards() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/client-metadata/5", listener.local_addr().unwrap());
+        let document = local_client_document(&cimd_config(true)).unwrap();
+
+        let status = while_serving_document(listener, document, async {
+            reqwest::get(&url).await.unwrap().status()
+        })
+        .await;
+
+        assert_eq!(status, 200);
+        assert!(reqwest::get(&url).await.is_err());
     }
 
     #[tokio::test]
