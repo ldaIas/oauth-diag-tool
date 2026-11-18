@@ -35,11 +35,19 @@ cd src-tauri && cargo test
 
 # Regenerate ui/src/bindings.ts after changing a command or event type
 cd src-tauri && UPDATE_BINDINGS=1 cargo test bindings_are_current
+
+# Run landing page unit tests (node:test, no dependencies)
+cd site && npm test
+
+# Preview the landing page with its Cloudflare Pages headers
+cd site && npx wrangler pages dev public --port 8788
 ```
 
 Requirements: Node.js 24 LTS with npm, Rust 1.85+ (`rust-version` in `Cargo.toml`), and `tauri-cli` 2.12+ (`cargo install tauri-cli --version "^2.12" --locked`).
 
 CI (`.github/workflows/ci.yml`) runs two jobs on pushes to `main` and on PRs: `rust` (macOS: clippy + `cargo test`) and `frontend` (Ubuntu: `npm ci`, typecheck, `npm test`, `npm run build`). Clippy uses `--all-targets -D warnings`, so test code must be clippy-clean too. The Rust job runs `mkdir -p ui/dist` first because `tauri::generate_context!` needs the frontend dist directory to exist at compile time.
+
+`.github/workflows/deploy-site.yml` is started manually. It runs the `site/` tests and deploys `site/public/` to the `oauth-diag-tool` Cloudflare Pages project with Wrangler, using the `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets. A run from `main` updates production; a run from another branch creates a preview deployment.
 
 ## Testing Conventions
 
@@ -71,6 +79,8 @@ CI (`.github/workflows/ci.yml`) runs two jobs on pushes to `main` and on PRs: `r
   - `ui/src/help/en.json` — field help text shown by the ⓘ icons, grouped by section (`server`, `serverSettings`, `serverUser`, `clientConfig`, `paramSection`, `param`). Components reference entries as typed `section.field` keys (`HelpKey`), so a misspelled or removed key fails the typecheck. `param.<name>` entries are looked up by OAuth parameter name, and extra params without an entry get no icon. Edit wording here, not in components.
   - `ui/src/updater.ts` — auto-update check through `@tauri-apps/plugin-updater`. Failures are logged only and never interrupt the app.
   - `ui/src/styles.css` — dark theme styles driven by CSS variables.
+
+**Landing page:** `site/` is the static page for oauth-tool.idalas.com, separate from the app bundle and with no build step or dependencies. `site/public/` is deployed as is. `app.js` reads the latest release from the GitHub API in the browser, so a new release needs no redeploy; if that fails, the static link to the GitHub release page remains. `releases.js` holds the pure asset matching and OS detection, tested by `site/test/`; its filename patterns must keep matching the assets the Release workflow produces. `_headers` sets the CSP, whose `connect-src` allows only `api.github.com`.
 
 **Tauri commands:** `create_server_config`, `get_server_configs`, `delete_server_config`, `add_client_to_server`, `delete_client`, `get_client_configs`, `create_client_config`, `update_client_config`, `delete_client_config`, `update_server_settings`, `add_user_to_server`, `update_user`, `delete_user`, `start_server`, `stop_server`, `get_callback_url`, `authorize_client`, `refresh_token`, `cancel_authorization`, `fetch_server_metadata`.
 
