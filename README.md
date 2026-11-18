@@ -8,10 +8,12 @@ Pre-built binaries are available on the [Releases](../../releases) page. Downloa
 
 ### macOS Note
 
-The app is not signed with an Apple Developer certificate. After installing, you need to remove the quarantine attribute before it will run:
+macOS builds are not signed or notarized, so macOS may block the app the first time you open it. Try **Open Anyway** in System Settings > Privacy & Security.
+
+If that doesn't work and you trust this download, this command removes the quarantine flag and bypasses that macOS security check:
 
 ```bash
-xattr -cr "/Applications/OAuth Diagnostic Tool.app"
+xattr -dr com.apple.quarantine "/Applications/OAuth Diagnostic Tool.app"
 ```
 
 ## Usage

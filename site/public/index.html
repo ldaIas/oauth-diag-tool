@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Idalas' OAuth Diagnostic Tool</title>
+    <meta
+      name="description"
+      content="A desktop app for running local OAuth servers and testing OAuth client configurations."
+    />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="preload" href="/fonts/jetbrains-mono-latin.woff2" as="font" type="font/woff2" crossorigin />
+    <link rel="stylesheet" href="/styles.css" />
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <main>
+      <header class="hero">
+        <h1>Idalas' OAuth Diagnostic Tool</h1>
+      </header>
+
+      <section aria-labelledby="about-heading">
+        <h2 id="about-heading">About</h2>
+        <p>
+          A desktop app for running OAuth authorization servers on your machine and testing client
+          configurations against them, or against any other server. Run authorization code, client
+          credentials and refresh token flows, then inspect exactly what came back.
+        </p>
+        <img
+          class="screenshot"
+          src="/screenshot.png"
+          width="2880"
+          height="1800"
+          alt="The app with a running local OAuth server on the left and a client configuration showing a successful token response on the right."
+        />
+      </section>
+
+      <section aria-labelledby="downloads-heading">
+        <h2 id="downloads-heading">Downloads</h2>
+        <p id="release-summary" class="muted">Latest release on GitHub</p>
+        <div class="download-actions">
+          <a id="primary-download" class="button" href="https://github.com/ldaIas/oauth-diag-tool/releases/latest">
+            View latest release
+          </a>
+          <a id="alternate-download" class="button button-secondary" href="#" hidden></a>
+        </div>
+
+        <ul id="download-list" class="download-list" hidden></ul>
+
+        <p class="note">
+          macOS builds are not signed or notarized, so macOS may block the app the first time you
+          open it. Try <strong>Open Anyway</strong> in System Settings &gt; Privacy &amp; Security.
+          If that doesn't work and you trust this download, this command removes the quarantine flag
+          and bypasses that macOS security check:
+          <code>xattr -dr com.apple.quarantine "/Applications/OAuth Diagnostic Tool.app"</code>
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <a href="https://github.com/ldaIas/oauth-diag-tool">GitHub</a>
+      <a href="https://github.com/ldaIas/oauth-diag-tool/releases">All releases</a>
+      <a href="https://idalas.com">idalas.com</a>
+    </footer>
+  </body>
+</html>
